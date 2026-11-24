@@ -29,6 +29,9 @@ __pycache__/
 *$py.class
 .pytest_cache/
 
+# Local isolated E2E test outputs (binary assets, renders, trace artifacts)
+e2e_runs/
+
 # Environment & secrets
 .env
 .env.*

@@ -258,38 +258,21 @@ class TestBenchmarkPolicyRegression(unittest.TestCase):
             self.assertNotIn(forbidden, preflight_code)
 
     def test_T07_existing_infrastructure_regression(self) -> None:
-        # 1. Verify AGENTS.md consistency and preserved 17-step production order
+        # 1. Verify AGENTS.md consistency, Blender-Only rule, and dynamic blender-director routing
         policy = bp.parse_project_policy(AGENTS_MD)
         self.assertTrue(policy.exists)
         self.assertTrue(policy.supports_text_only)
         self.assertTrue(policy.supports_reference_guided)
         self.assertTrue(policy.defines_precedence)
+        self.assertTrue(policy.enforces_blender_only)
+        self.assertTrue(policy.requires_director_routing)
         self.assertFalse(policy.has_unconditional_reference_blocker)
 
         agents_text = AGENTS_MD.read_text(encoding="utf-8")
-        expected_order = [
-            "- blender-director",
-            "- character-archetypes",
-            "- stylized-style",
-            "- character-artist",
-            "- sculpting",
-            "- retopology",
-            "- hair-groom",
-            "- uv-workflow",
-            "- texture-workflow",
-            "- materials",
-            "- qa-review",
-            "- rigging",
-            "- qa-review",
-            "- animation",
-            "- qa-review",
-            "- export-pipeline",
-            "- godot-export",
-        ]
-        # Extract the bullet list under ## Character Production
-        prod_section = agents_text.split("## Character Production", 1)[1].split("Load supporting references on demand.", 1)[0]
-        actual_order = [line.strip() for line in prod_section.splitlines() if line.strip().startswith("- ")]
-        self.assertEqual(actual_order, expected_order)
+        self.assertIn("blender-director", agents_text)
+        self.assertNotIn("Use relevant skills in this order:", agents_text)
+        self.assertIn("TEXT_ONLY", agents_text)
+        self.assertIn("REFERENCE_GUIDED", agents_text)
 
         # 2. Verify project-local opencode.json still configures lazy MCP wrapper
         oc = json.loads(PROJECT_OPENCODE_JSON.read_text(encoding="utf-8"))

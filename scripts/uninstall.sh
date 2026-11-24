@@ -102,6 +102,10 @@ else:
     )
 
 files_to_remove = [dst_dir / fname for fname in managed_files if (dst_dir / fname).is_file()]
+for opt_rel in (manifest.get("optional_managed_files") or []):
+    opt_path = target_root / opt_rel
+    if opt_path.is_file():
+        files_to_remove.append(opt_path)
 files_to_remove.append(manifest_path)
 
 remove_blender_entry = False

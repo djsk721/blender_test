@@ -98,6 +98,15 @@ MANAGED_FILES = [
     "stop.sh",
 ]
 EXECUTABLE_FILES = {"mcp_wrapper.py", "start.sh", "stop.sh"}
+ORCHESTRATION_REL_FILES = [
+    "blender_orchestration/__init__.py",
+    "blender_orchestration/skill_registry.py",
+    "blender_orchestration/contracts.py",
+    "blender_orchestration/mcp_adapter.py",
+    "blender_orchestration/scene_ops.py",
+    "blender_orchestration/pipeline.py",
+    "scripts/benchmark_preflight.py",
+]
 
 
 def deep_merge_defaults(existing: dict, defaults: dict) -> dict:
@@ -172,6 +181,14 @@ try:
             atomic_write_json(dst_dir / "config.json", merged_cfg)
             continue
         copy_atomic(src_dir / fname, dst_dir / fname, executable=(fname in EXECUTABLE_FILES))
+
+    if manifest.get("with_orchestration"):
+        orch_dir = target_root / ".opencode" / "orchestration"
+        for rel in ORCHESTRATION_REL_FILES:
+            if (repo_root / rel).is_file():
+                copy_atomic(repo_root / rel, orch_dir / rel, executable=rel.endswith("benchmark_preflight.py"))
+                if validate:
+                    py_compile.compile(str(orch_dir / rel), doraise=True)
 
     manifest["version"] = new_version
     manifest["previous_version"] = prev_version

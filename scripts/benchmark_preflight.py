@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Dynamic Benchmark Preflight Validation and QA Gate evaluator.
 
-Resolves benchmark reference policy (TEXT_ONLY vs REFERENCE_GUIDED) strictly from
-project instructions (.opencode/AGENTS.md) and the user benchmark prompt without
-any model-specific routing or hardcoded overrides.
+Resolves benchmark reference policy strictly from project instructions
+(.opencode/AGENTS.md) and the user benchmark prompt without any model-specific
+routing, enforcing the Blender-Only Asset Production Policy (TEXT_ONLY and
+REFERENCE_GUIDED only; no IMAGE_TO_3D or external AI 3D generators).
 """
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -18,6 +20,10 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_AGENTS_MD = PROJECT_ROOT / ".opencode" / "AGENTS.md"
+DEFAULT_SKILLS_ROOT = PROJECT_ROOT / ".opencode" / "skills"
+DEFAULT_VERSION_FILE = PROJECT_ROOT / ".opencode" / "mcp" / "blender" / "VERSION"
+
+SUPPORTED_PRODUCTION_MODES = ("TEXT_ONLY", "REFERENCE_GUIDED")
 
 GATE_A_DIMENSIONS = (
     "silhouette",
@@ -77,6 +83,14 @@ _CONTRAST_NON_MISSING_CLAUSE = re.compile(
     re.IGNORECASE,
 )
 
+_DISALLOWED_GENERATOR_PATTERNS = (
+    re.compile(r"\bimage[-_ ]to[-_ ]3d\b", re.IGNORECASE),
+    re.compile(r"\btripo(?:3d)?\b", re.IGNORECASE),
+    re.compile(r"\bhunyuan\s*3d\b", re.IGNORECASE),
+    re.compile(r"\bhyper3d\b", re.IGNORECASE),
+    re.compile(r"\bmeshy\b", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class ProjectPolicy:
@@ -87,6 +101,8 @@ class ProjectPolicy:
     supports_text_only: bool
     supports_reference_guided: bool
     defines_precedence: bool
+    enforces_blender_only: bool
+    requires_director_routing: bool
     requires_gate_a: bool
     requires_gate_b: bool
     requires_gate_c: bool
@@ -107,6 +123,8 @@ def parse_project_policy(agents_md_path: Path | None = None) -> ProjectPolicy:
             supports_text_only=False,
             supports_reference_guided=False,
             defines_precedence=False,
+            enforces_blender_only=False,
+            requires_director_routing=False,
             requires_gate_a=False,
             requires_gate_b=False,
             requires_gate_c=False,
@@ -115,13 +133,15 @@ def parse_project_policy(agents_md_path: Path | None = None) -> ProjectPolicy:
         )
 
     text = path.read_text(encoding="utf-8")
-    has_text_only = "TEXT_ONLY" in text and "Mode B: Text-Only Production" in text
-    has_ref_guided = "REFERENCE_GUIDED" in text and "Mode A: Reference-Guided Production" in text
-    defines_precedence = "## Instruction Precedence" in text
+    has_text_only = "TEXT_ONLY" in text and ("Mode B" in text or "Text-Only" in text)
+    has_ref_guided = "REFERENCE_GUIDED" in text and ("Mode A" in text or "Reference-Guided" in text)
+    defines_precedence = "Instruction Precedence" in text
+    enforces_blender_only = "Blender-Only" in text and "IMAGE_TO_3D" in text
+    requires_director_routing = "blender-director" in text
     requires_gate_a = "Gate A" in text
     requires_gate_b = "Gate B" in text
     requires_gate_c = "Gate C" in text
-    requires_independent_qa = "## Independent Visual QA" in text
+    requires_independent_qa = "Independent Visual QA" in text
 
     # Legacy conflict signature: blanket requirement before any modeling without mode distinction
     legacy_unconditional_req = bool(
@@ -136,6 +156,8 @@ def parse_project_policy(agents_md_path: Path | None = None) -> ProjectPolicy:
         supports_text_only=has_text_only,
         supports_reference_guided=has_ref_guided,
         defines_precedence=defines_precedence,
+        enforces_blender_only=enforces_blender_only,
+        requires_director_routing=requires_director_routing,
         requires_gate_a=requires_gate_a,
         requires_gate_b=requires_gate_b,
         requires_gate_c=requires_gate_c,
@@ -172,15 +194,16 @@ def resolve_preflight_policy(
     text_only_hits = _match_any(_TEXT_ONLY_PATTERNS, prompt_text)
     ref_guided_hits = _match_any(_REFERENCE_GUIDED_PATTERNS, prompt_text)
     missing_ref_hits = _match_any(_MISSING_REF_PATTERNS, cleaned_for_missing)
+    disallowed_gen_hits = _match_any(_DISALLOWED_GENERATOR_PATTERNS, prompt_text)
 
     has_supplied_refs = bool(supplied_references)
     explicitly_empty_refs = supplied_references is not None and len(supplied_references) == 0
 
     text_spec_available = bool((text_specification or "").strip() or prompt_text.strip())
     precedence_steps = [
-        "1. Explicit user benchmark requirements determine reference mode",
-        "2. Project instructions (.opencode/AGENTS.md) define mode execution",
-        "3. Installed Blender Skills supply stage-specific workflows",
+        "1. Explicit user benchmark requirements determine TEXT_ONLY vs REFERENCE_GUIDED (Blender-only; no IMAGE_TO_3D)",
+        "2. Project instructions (.opencode/AGENTS.md) define mode execution and Blender-only guardrails",
+        "3. Blender Director dynamically selects stage-specific Skills under .opencode/skills/",
         "4. Mandatory Quality Gates (A/B/C) and Independent Visual QA apply",
     ]
 
@@ -198,6 +221,10 @@ def resolve_preflight_policy(
     ) -> dict[str, Any]:
         return {
             "benchmark_mode": mode,
+            "supported_modes": list(SUPPORTED_PRODUCTION_MODES),
+            "blender_only_production": True,
+            "external_ai_3d_generators_allowed": False,
+            "premade_assets_allowed": False,
             "reference_images_required": ref_required,
             "reference_images_allowed": ref_allowed,
             "text_specification_available": text_spec_available,
@@ -218,6 +245,7 @@ def resolve_preflight_policy(
         "text_only_cues": text_only_hits,
         "reference_guided_cues": ref_guided_hits,
         "missing_reference_cues": missing_ref_hits,
+        "disallowed_generator_cues": disallowed_gen_hits,
         "supplied_references_count": len(supplied_references) if supplied_references is not None else None,
     }
 
@@ -231,6 +259,22 @@ def resolve_preflight_policy(
             status="BLOCKED",
             blocker_reason=f"Project AGENTS.md not found at {policy.agents_md_path}",
             default_identity_status="NOT_VERIFIED",
+            detected_cues=detected,
+        )
+
+    if disallowed_gen_hits:
+        return _base_payload(
+            mode="BLOCKED_DISALLOWED_MODE",
+            ref_required=False,
+            ref_allowed=False,
+            modeling_permitted=False,
+            identity_verifiable=False,
+            status="BLOCKED",
+            blocker_reason=(
+                "Blender-Only Asset Production Policy prohibits IMAGE_TO_3D and external AI 3D generators "
+                f"({', '.join(disallowed_gen_hits)})."
+            ),
+            default_identity_status="BLOCKED",
             detected_cues=detected,
         )
 
@@ -335,7 +379,7 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
     if preflight.get("status") == "BLOCKED" or not preflight.get("modeling_permitted"):
         blocker = preflight.get("blocker_reason") or "Preflight blocked modeling."
         reasons.append(blocker)
-        identity_status = "BLOCKED" if mode == "REFERENCE_GUIDED" else preflight.get("default_exact_identity_status", "NOT_VERIFIED")
+        identity_status = "BLOCKED" if mode in ("REFERENCE_GUIDED", "BLOCKED_DISALLOWED_MODE") else preflight.get("default_exact_identity_status", "NOT_VERIFIED")
         return {
             "gate": "GATE_A",
             "benchmark_mode": mode,
@@ -354,6 +398,11 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
     failed_dims = [dim for dim in GATE_A_DIMENSIONS if dimensions.get(dim) == "FAIL"]
     missing_dims = [dim for dim in GATE_A_DIMENSIONS if dimensions.get(dim) not in ("PASS", "FAIL")]
 
+    # Support optional extra modeling checks (e.g., hands_and_wrists, topology_and_budget) when provided
+    for opt_dim in ("hands_and_wrists", "topology_and_budget"):
+        if dimensions.get(opt_dim) == "FAIL":
+            failed_dims.append(opt_dim)
+
     if major_defects or failed_dims:
         modeling_status = "FAIL"
         if major_defects:
@@ -363,7 +412,7 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
     elif not rendered_inspected or not independent_reviewer:
         modeling_status = "NOT_VERIFIED"
         if not rendered_inspected:
-            reasons.append("Rendered images were not inspected (script execution alone cannot approve Gate A).")
+            reasons.append("Rendered images were not inspected (file existence or script execution alone cannot approve Gate A).")
         if not independent_reviewer:
             reasons.append("Independent visual reviewer is required; self-approval is disallowed.")
     elif missing_dims:
@@ -372,9 +421,7 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
     else:
         modeling_status = "PASS"
 
-    # Evaluate exact original-character identity fidelity separately
     if mode == "TEXT_ONLY":
-        # Never grant automatic PASS for exact original-character likeness in TEXT_ONLY mode
         exact_identity_status = "NOT_VERIFIED"
         if review.get("exact_identity_claimed_pass"):
             reasons.append("Automatic exact-identity PASS rejected in TEXT_ONLY mode; recorded as NOT_VERIFIED.")
@@ -488,6 +535,17 @@ def evaluate_gate_c(gate_b_result: dict[str, Any], review: dict[str, Any]) -> di
     }
 
 
+def _compute_skills_hash(skills_root: Path) -> str | None:
+    if not skills_root.is_dir():
+        return None
+    h = hashlib.sha256()
+    for f in sorted(p for p in skills_root.rglob("*") if p.is_file()):
+        rel = f.relative_to(skills_root).as_posix()
+        digest = hashlib.sha256(f.read_bytes()).hexdigest()
+        h.update(f"{rel}:{digest}\n".encode("utf-8"))
+    return h.hexdigest()
+
+
 def build_benchmark_metadata(
     prompt: str,
     *,
@@ -500,19 +558,26 @@ def build_benchmark_metadata(
     hardware_allocation: str = "",
     runtime_environment: str = "",
     agents_md_path: Path | None = None,
+    skills_root: Path | None = None,
     supplied_references: list[str] | None = None,
     text_specification: str | None = None,
 ) -> dict[str, Any]:
-    """Build benchmark run metadata storing preflight resolution and run parameters."""
+    """Build benchmark run metadata storing preflight resolution, hashes, and run parameters."""
     # Preflight is computed without model/provider to guarantee model independence.
+    resolved_agents = Path(agents_md_path) if agents_md_path is not None else DEFAULT_AGENTS_MD
+    resolved_skills = Path(skills_root) if skills_root is not None else DEFAULT_SKILLS_ROOT
     preflight = resolve_preflight_policy(
         prompt,
-        agents_md_path=agents_md_path,
+        agents_md_path=resolved_agents,
         supplied_references=supplied_references,
         text_specification=text_specification,
     )
     return {
         "run_id": run_id,
+        "prompt_sha256": hashlib.sha256((prompt or "").encode("utf-8")).hexdigest(),
+        "agents_md_sha256": hashlib.sha256(resolved_agents.read_bytes()).hexdigest() if resolved_agents.is_file() else None,
+        "skills_revision_hash": _compute_skills_hash(resolved_skills),
+        "mcp_lifecycle_version": DEFAULT_VERSION_FILE.read_text(encoding="utf-8").strip() if DEFAULT_VERSION_FILE.is_file() else None,
         "preflight": preflight,
         "run_environment": {
             "model_id": model_id,

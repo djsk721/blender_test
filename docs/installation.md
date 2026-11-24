@@ -20,6 +20,20 @@ cd opencode-blender-mcp-lifecycle
 - `--force`: Overwrite an existing unmanaged `.opencode/mcp/blender/` directory or conflicting `mcp.servers.blender` registration (after creating a backup)
 - `--reset-config`: Replace existing `.opencode/mcp/blender/config.json` with repository defaults
 - `--no-validate`: Skip post-install syntax and config validation
+- `--with-orchestration`: Install `blender_orchestration/` and `scripts/benchmark_preflight.py` into `<target>/.opencode/orchestration/`
+- `--with-policy`: Install `.opencode/AGENTS.md` if missing; if an existing `.opencode/AGENTS.md` is present, preserve it untouched and write `.opencode/AGENTS.blender-skills.md` instead
+- `--merge-policy`: Safely back up an existing `.opencode/AGENTS.md` and append/update a delimited `BLENDER-SKILLS MANAGED POLICY` block
+- `--skills-source <dir>`: Copy an OpenCode-compatible skills tree (validated to include `blender-director/SKILL.md` and shared `references/`) into `<target>/.opencode/skills/`
+
+### Installing with Full Orchestration & OpenCode Skills
+
+```bash
+./scripts/install.sh \
+  --with-orchestration \
+  --with-policy \
+  --skills-source /home/jhkim/tools/blender_test/.opencode/skills \
+  /path/to/target/project
+```
 
 ## Installing into Nightfall Survivors (Future Example)
 
