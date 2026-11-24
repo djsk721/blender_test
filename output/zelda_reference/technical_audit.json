@@ -1,0 +1,2218 @@
+{
+  "mesh_objects": 230,
+  "triangles": 121752,
+  "triangle_budget": 100000,
+  "within_budget": false,
+  "material_count": 32,
+  "materials": {
+    "MAT_Study_Skin": [],
+    "MAT_Study_Glove": [],
+    "MAT_Study_Seam": [],
+    "MAT_Study_Ink": [],
+    "MAT_Study_EyeWhite": [],
+    "MAT_Study_IrisDark": [],
+    "MAT_Study_Teal": [],
+    "MAT_Study_Catch": [],
+    "MAT_Study_Ochre": [],
+    "MAT_Study_Crease": [],
+    "MAT_Study_Lip": [],
+    "MAT_Study_Ear": [],
+    "MAT_Study_Hair": [
+      [
+        "T_Zelda_Hair_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_Honey": [
+      [
+        "T_Zelda_Honey_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_Shine": [],
+    "MAT_Study_Azure": [
+      [
+        "T_Zelda_Azure_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_Pants": [
+      [
+        "T_Zelda_Pants_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_Leather": [
+      [
+        "T_Zelda_Leather_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_Ivory": [
+      [
+        "T_Zelda_Ivory_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_Gold": [],
+    "MAT_Study_LinenShadow": [
+      [
+        "T_Zelda_LinenShadow_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_LeatherLight": [],
+    "MAT_Study_Bronze": [],
+    "MAT_Study_AzureDark": [
+      [
+        "T_Zelda_AzureDark_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_PantsHigh": [],
+    "MAT_Study_Sole": [],
+    "MAT_Study_GoldLight": [],
+    "MAT_Study_AzureLight": [],
+    "MAT_Study_Slate": [],
+    "MAT_Study_SlateEdge": [
+      [
+        "T_Zelda_SlateEdge_BaseColor",
+        [
+          512,
+          512
+        ],
+        true
+      ]
+    ],
+    "MAT_Study_Gem": [],
+    "MAT_Study_Glow": []
+  },
+  "bounds_min_m": [
+    -0.40572693943977356,
+    -0.29775598645210266,
+    -0.023218102753162384
+  ],
+  "bounds_max_m": [
+    0.4074224829673767,
+    0.23935063183307648,
+    1.70540189743042
+  ],
+  "root_world_m": [
+    0.0,
+    0.0,
+    -0.023218102753162384
+  ],
+  "all_meshes_uv": true,
+  "all_meshes_unit_scale": true,
+  "nonmanifold_edges": 0,
+  "loose_vertices": 0,
+  "armatures": 0,
+  "animated_objects": 0,
+  "engine": "CYCLES",
+  "cycles_device": "CPU",
+  "blender_version": "5.3.0",
+  "mesh_details": [
+    {
+      "name": "SM_Study_Neck",
+      "triangles": 516,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hand_Free_Palm",
+      "triangles": 572,
+      "quads": 260,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Free_0",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Glove_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Free_1",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Glove_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Free_2",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Glove_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Free_3",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Glove_3",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Free_4",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Glove_4",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hand_Slate_Palm",
+      "triangles": 528,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Slate0",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_SlateFingerCap0",
+      "triangles": 168,
+      "quads": 70,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Slate1",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_SlateFingerCap1",
+      "triangles": 168,
+      "quads": 70,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Slate2",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_SlateFingerCap2",
+      "triangles": 168,
+      "quads": 70,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Finger_Slate3",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_SlateFingerCap3",
+      "triangles": 168,
+      "quads": 70,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Leg_Long_Shin",
+      "triangles": 676,
+      "quads": 320,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Leg_Raised_Shin",
+      "triangles": 516,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Wrist_Free_Join",
+      "triangles": 484,
+      "quads": 220,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Head_Base",
+      "triangles": 3932,
+      "quads": 1920,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Far_LashBase",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Far_Sclera",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Far_Limbal",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Far_Iris",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Far_Pupil",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Far_Glint",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Far_UpperLash",
+      "triangles": 268,
+      "quads": 128,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Near_LashBase",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Near_Sclera",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Near_Limbal",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Near_Iris",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Near_Pupil",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Near_Glint",
+      "triangles": 960,
+      "quads": 440,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Eye_Near_UpperLash",
+      "triangles": 268,
+      "quads": 128,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Brow_Far",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Brow_Near",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Nostril",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Lower_Lip",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Mouth_Line",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Ear_Near",
+      "triangles": 568,
+      "quads": 264,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Ear_Inner_Near",
+      "triangles": 284,
+      "quads": 128,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Ear_Far",
+      "triangles": 568,
+      "quads": 264,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Ear_Inner_Far",
+      "triangles": 284,
+      "quads": 128,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Scalpcap",
+      "triangles": 7424,
+      "quads": 3712,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_BackFall",
+      "triangles": 996,
+      "quads": 480,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_RightUndertow",
+      "triangles": 996,
+      "quads": 480,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftMantle",
+      "triangles": 1476,
+      "quads": 720,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftMain",
+      "triangles": 1476,
+      "quads": 720,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftBlade",
+      "triangles": 1236,
+      "quads": 600,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftBelow",
+      "triangles": 1236,
+      "quads": 600,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftRake",
+      "triangles": 1236,
+      "quads": 600,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftBottom",
+      "triangles": 1236,
+      "quads": 600,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftFlyawayA",
+      "triangles": 996,
+      "quads": 480,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_RightFlyaway",
+      "triangles": 756,
+      "quads": 360,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_TempleFar",
+      "triangles": 996,
+      "quads": 480,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Contour_LeftMantle2",
+      "triangles": 492,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Contour_LeftMain2",
+      "triangles": 492,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Contour_LeftBlade2",
+      "triangles": 412,
+      "quads": 200,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Contour_LeftBelow2",
+      "triangles": 412,
+      "quads": 200,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Contour_LeftRake2",
+      "triangles": 412,
+      "quads": 200,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Contour_LeftBottom2",
+      "triangles": 412,
+      "quads": 200,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A00",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B00",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A01",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B01",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A02",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B02",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A03",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B03",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A04",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B04",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A05",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B05",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A06",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B06",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A07",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B07",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_A08",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Braid_B08",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Swept_Fringe",
+      "triangles": 1608,
+      "quads": 780,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_Dark_Pin",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftHalo",
+      "triangles": 604,
+      "quads": 288,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_WindStrayA",
+      "triangles": 604,
+      "quads": 288,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_WindStrayB",
+      "triangles": 604,
+      "quads": 288,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_WindStrayC",
+      "triangles": 604,
+      "quads": 288,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_LeftFlyawayB",
+      "triangles": 680,
+      "quads": 324,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hair_TempleNear",
+      "triangles": 1196,
+      "quads": 576,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Torso_Tunic",
+      "triangles": 2372,
+      "quads": 1152,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Hips",
+      "triangles": 1084,
+      "quads": 512,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Raised_Boot",
+      "triangles": 1088,
+      "quads": 520,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Long_Boot",
+      "triangles": 1088,
+      "quads": 520,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Collar",
+      "triangles": 596,
+      "quads": 270,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Jabot",
+      "triangles": 300,
+      "quads": 139,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarGoldBorder",
+      "triangles": 268,
+      "quads": 128,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarLinenSeam",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarPleat0",
+      "triangles": 76,
+      "quads": 32,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarPleat1",
+      "triangles": 76,
+      "quads": 32,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarPleat2",
+      "triangles": 76,
+      "quads": 32,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarPleat3",
+      "triangles": 76,
+      "quads": 32,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarPleat4",
+      "triangles": 76,
+      "quads": 32,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_CollarPleat5",
+      "triangles": 76,
+      "quads": 32,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Cream",
+      "triangles": 1220,
+      "quads": 576,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Stitch0",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib0_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib0_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib0_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Stitch1",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib1_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib1_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib1_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Stitch2",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib2_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib2_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib2_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Stitch3",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib3_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib3_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib3_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Stitch4",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib4_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib4_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib4_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Stitch5",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib5_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib5_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib5_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Stitch6",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib6_0",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib6_1",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Bodice_Rib6_2",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_TunicTailA",
+      "triangles": 236,
+      "quads": 110,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_TunicTailA_Edge",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_TunicTailB",
+      "triangles": 204,
+      "quads": 95,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_TunicTailB_Edge",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Baldric_Front",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Baldric_Gilt",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Pouch",
+      "triangles": 268,
+      "quads": 124,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_PouchFlap",
+      "triangles": 252,
+      "quads": 117,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_PouchSeam",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_PouchClasp",
+      "triangles": 528,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_HangingBelt",
+      "triangles": 268,
+      "quads": 128,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_HangingBeltEdge",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_BeltRivet0",
+      "triangles": 100,
+      "quads": 40,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_BeltRivet1",
+      "triangles": 100,
+      "quads": 40,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_BeltRivet2",
+      "triangles": 100,
+      "quads": 40,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_BeltRivet3",
+      "triangles": 100,
+      "quads": 40,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_BeltRivet4",
+      "triangles": 100,
+      "quads": 40,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_LinenSleeve_Left",
+      "triangles": 1084,
+      "quads": 512,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_WristCuff_Left",
+      "triangles": 416,
+      "quads": 180,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_WristGold_Left",
+      "triangles": 416,
+      "quads": 180,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_WristCuff_Right",
+      "triangles": 416,
+      "quads": 180,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_WristGold_Right",
+      "triangles": 416,
+      "quads": 180,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_SleeveLeft_Fold",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_SleeveRight_Gilt",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_SleeveRight_Fold",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Raised_KneeWrap",
+      "triangles": 776,
+      "quads": 360,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Long_KneeWrap",
+      "triangles": 776,
+      "quads": 360,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Raise_KneeFabricFold",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Long_KneeFabricFold",
+      "triangles": 268,
+      "quads": 128,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Raised_Boot_Toecap",
+      "triangles": 528,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Long_Boot_Toecap",
+      "triangles": 528,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_TrouserRaised_Seam",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_TrouserLong_Seam",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Sleeve_Left",
+      "triangles": 1172,
+      "quads": 560,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Sleeve_Right",
+      "triangles": 1340,
+      "quads": 640,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_LinenSleeve_Right",
+      "triangles": 1340,
+      "quads": 640,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Leg_Raised_Trouser",
+      "triangles": 1172,
+      "quads": 560,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Leg_Long_Trouser",
+      "triangles": 1172,
+      "quads": 560,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Long_Gaiter",
+      "triangles": 956,
+      "quads": 450,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Raised_Gaiter",
+      "triangles": 536,
+      "quads": 240,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Chest_Brooch",
+      "triangles": 316,
+      "quads": 146,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Chest_Brooch_Gem",
+      "triangles": 288,
+      "quads": 126,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Tunic_ChevronA",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Tunic_ChevronB",
+      "triangles": 140,
+      "quads": 64,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Fitted",
+      "triangles": 2688,
+      "quads": 1344,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Welt0.06",
+      "triangles": 3596,
+      "quads": 1792,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Welt0.26",
+      "triangles": 3596,
+      "quads": 1792,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Welt0.91",
+      "triangles": 3596,
+      "quads": 1792,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Welt0.98",
+      "triangles": 3596,
+      "quads": 1792,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss00",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss01",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss02",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss03",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss04",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss05",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss06",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss07",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss08",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss09",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss10",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss11",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Emboss12",
+      "triangles": 204,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Scroll0",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Scroll1",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Corset_Scroll2",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Long_BootCollar",
+      "triangles": 724,
+      "quads": 336,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Long_BootBuckle",
+      "triangles": 224,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Raised_BootCollar",
+      "triangles": 724,
+      "quads": 336,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Raised_BootBuckle",
+      "triangles": 224,
+      "quads": 96,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_Casing",
+      "triangles": 892,
+      "quads": 410,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_Inset",
+      "triangles": 364,
+      "quads": 168,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_RunCircuitA",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_RunCircuitB",
+      "triangles": 332,
+      "quads": 160,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_RunCircuitC",
+      "triangles": 460,
+      "quads": 224,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_00",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_01",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_02",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_03",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_04",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_05",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_06",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_07",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_08",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_09",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_10",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_11",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_12",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_13",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_InlayDot_14",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_LensBezel",
+      "triangles": 284,
+      "quads": 131,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_LensGasket",
+      "triangles": 616,
+      "quads": 280,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_LensGlass",
+      "triangles": 616,
+      "quads": 280,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_LuminousIris",
+      "triangles": 1548,
+      "quads": 768,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_LensPupil",
+      "triangles": 252,
+      "quads": 108,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    },
+    {
+      "name": "SM_Study_Slate_LensGlint",
+      "triangles": 120,
+      "quads": 48,
+      "non_manifold": 0,
+      "loose": 0,
+      "has_uv": true,
+      "unit_scale": true
+    }
+  ]
+}

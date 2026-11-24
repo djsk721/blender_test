@@ -1,0 +1,69 @@
+{
+  "run_id": "",
+  "prompt_sha256": "ef1d9caf7d54e4b858f9eaed84d35992016d7cb70b36a30d3addfbf2dcbde2bc",
+  "agents_md_sha256": "00072343fe8d3ee6e265061d75d5eb4bba7a5864836c0b3939129bc608ceb3e4",
+  "skills_revision_hash": "bb48323db4317ea241ad87e47755a53726bab160cd163c6c962ec0163e75ef36",
+  "mcp_lifecycle_version": "0.1.0",
+  "preflight": {
+    "benchmark_mode": "REFERENCE_GUIDED",
+    "supported_modes": [
+      "TEXT_ONLY",
+      "REFERENCE_GUIDED"
+    ],
+    "blender_only_production": true,
+    "external_ai_3d_generators_allowed": false,
+    "premade_assets_allowed": false,
+    "reference_images_required": true,
+    "reference_images_allowed": true,
+    "text_specification_available": true,
+    "modeling_permitted": true,
+    "exact_identity_fidelity_verifiable": true,
+    "modeling_quality_gate_required": true,
+    "independent_visual_review_required": true,
+    "status": "READY",
+    "blocker_reason": null,
+    "default_exact_identity_status": "PENDING_REFERENCE_REVIEW",
+    "model_agnostic": true,
+    "project_policy": {
+      "agents_md_path": "/home/jhkim/tools/blender_test/.opencode/AGENTS.md",
+      "exists": true,
+      "supports_text_only": true,
+      "supports_reference_guided": true,
+      "defines_precedence": true,
+      "enforces_blender_only": true,
+      "requires_director_routing": true,
+      "requires_gate_a": true,
+      "requires_gate_b": true,
+      "requires_gate_c": true,
+      "requires_independent_visual_qa": true,
+      "has_unconditional_reference_blocker": false
+    },
+    "detected_cues": {
+      "text_only_cues": [],
+      "reference_guided_cues": [],
+      "missing_reference_cues": [],
+      "disallowed_generator_cues": [],
+      "supplied_references_count": 1
+    },
+    "policy_precedence_applied": [
+      "1. Explicit user benchmark requirements determine TEXT_ONLY vs REFERENCE_GUIDED (Blender-only; no IMAGE_TO_3D)",
+      "2. Project instructions (.opencode/AGENTS.md) define mode execution and Blender-only guardrails",
+      "3. Blender Director dynamically selects stage-specific Skills under .opencode/skills/",
+      "4. Mandatory Quality Gates (A/B/C) and Independent Visual QA apply"
+    ]
+  },
+  "run_environment": {
+    "model_id": "gpt-6.2-sol",
+    "provider": "openai",
+    "variant": "",
+    "reasoning_effort": "",
+    "inference_backend": "",
+    "hardware_allocation": "",
+    "runtime_environment": ""
+  },
+  "qa_gates": {
+    "gate_a": null,
+    "gate_b": null,
+    "gate_c": null
+  }
+}
