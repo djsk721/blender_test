@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "blender": {
+        "type": "local",
+        "command": [
+          "python3",
+          "-u",
+          ".opencode/mcp/blender/mcp_wrapper.py"
+        ],
+        "cwd": ".",
+        "environment": {
+          "BLENDER_HOST": "127.0.0.1",
+          "BLENDER_PORT": "9876",
+          "BLENDER_MCP_CONFIG": ".opencode/mcp/blender/config.json"
+        },
+        "disabled": false,
+        "timeout": {
+          "startup": 60000,
+          "catalog": 120000,
+          "execution": 300000
+        }
+      }
+    }
+  }
+}

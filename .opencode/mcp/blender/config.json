@@ -1,0 +1,46 @@
+{
+  "lazy_loading": true,
+  "blender_host": "127.0.0.1",
+  "blender_port": 9876,
+  "idle_timeout_sec": 600,
+  "startup_timeout_sec": 60,
+  "shutdown_timeout_sec": 30,
+  "readiness_poll_interval_sec": 0.25,
+  "watchdog_poll_interval_sec": 2.0,
+  "work_lock_timeout_sec": 240,
+  "addon_probe_timeout_sec": 5.0,
+  "auto_recovery": true,
+  "max_reconnect_retries": 2,
+  "auto_backup": true,
+  "auto_restore_on_restart": true,
+  "max_backup_files": 10,
+  "manage_external_blender": false,
+  "blender_executable": "auto",
+  "xvfb_executable": "auto",
+  "xvfb_screen": "1280x1024x24",
+  "upstream_mcp_command": [
+    "uvx",
+    "mcp-for-blender"
+  ],
+  "non_blender_tools": [
+    "record_trajectory_feedback",
+    "open_viewport",
+    "viewport_latest"
+  ],
+  "gpu": {
+    "enabled": true,
+    "render_device": "AUTO",
+    "cycles_backend": "OPTIX",
+    "preferred_gpu_index": "auto",
+    "isolate_cuda_device": true,
+    "min_free_vram_warn_mib": 1024,
+    "min_free_vram_error_mib": 512,
+    "vram_low_policy": "cpu_fallback",
+    "unhealthy_gpu_policy": "cpu_fallback",
+    "max_safe_temp_c": 88,
+    "expected_gpu_count": null,
+    "cpu_software_viewport": false
+  },
+  "runtime_dir": ".opencode/mcp/blender/runtime",
+  "log_level": "INFO"
+}

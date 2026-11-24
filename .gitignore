@@ -1,0 +1,38 @@
+# Runtime caches, logs, locks, PIDs, and installer backups
+.opencode/mcp/blender/runtime/
+.opencode/mcp/.backups/
+mcp/blender/runtime/
+mcp/blender/backups/
+*.log
+*.pid
+*.lock
+*.bak
+
+# Workspace-local OpenCode skills/agents/rules (preserved on disk, excluded from reusable repo)
+.opencode/skills/
+.opencode/agents/
+.opencode/AGENTS.md
+
+# Generated 3D assets, renders, and Blender auto-saves
+*.blend
+*.blend1
+*.blend2
+*.fbx
+*.glb
+*.gltf
+*.png
+*.jpg
+*.jpeg
+
+# Python caches & test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environment & secrets
+.env
+.env.*
+*.key
+*.pem
+*.secret
