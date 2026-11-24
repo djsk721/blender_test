@@ -17,6 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import benchmark_preflight as bp  # noqa: E402
 
 from .skill_registry import SkillRegistry
+from .visual_qa import VisualReviewEvidence, verify_visual_review_evidence
 
 
 def _sha256_file(path: Path | None) -> str | None:
@@ -43,20 +44,26 @@ def _git_head(repo_root: Path) -> str | None:
 
 @dataclass
 class PerformanceMetrics:
-    """Execution telemetry and honest unavailability reporting."""
+    """Execution telemetry separating quality, runtime, and tool efficiency."""
 
     total_runtime_sec: float = 0.0
     model_input_tokens: int | str = "unavailable"
     model_output_tokens: int | str = "unavailable"
     skill_activations: list[str] = field(default_factory=list)
     skill_applications: list[str] = field(default_factory=list)
+    skill_call_count: int = 0
     mcp_calls_by_operation: dict[str, int] = field(default_factory=dict)
+    mcp_tool_call_count: int = 0
     python_execution_count: int = 0
     blender_error_count: int = 0
     retry_count: int = 0
+    modeling_iteration_count: int = 0
+    qa_failure_count: int = 0
+    qa_fix_history: list[dict[str, Any]] = field(default_factory=list)
     render_durations_sec: dict[str, float] = field(default_factory=dict)
     stage_durations_sec: dict[str, float] = field(default_factory=dict)
     compaction_events: int | str = "unavailable"
+    final_quality_summary: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -78,6 +85,8 @@ def build_reproducibility_manifest(
     variant: str = "unspecified",
     reasoning_settings: str = "unavailable",
     hardware_info: dict[str, Any] | str = "unavailable",
+    blender_version: str = "unavailable",
+    skills_version: str = "1.3.0",
     output_dir: str = "",
     supplied_references: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -95,22 +104,32 @@ def build_reproducibility_manifest(
         agents_md_path=agents_path,
         supplied_references=supplied_references,
     )
+    skills_preflight = bp.validate_required_skills(skills_dir)
+    ref_hashes = {
+        ref: _sha256_file(Path(ref))
+        for ref in (supplied_references or [])
+    }
 
     mcp_version = ver_path.read_text(encoding="utf-8").strip() if ver_path.is_file() else None
 
     return {
         "run_id": run_id,
+        "run_id_format_valid": bp.validate_benchmark_run_id(run_id),
         "output_dir": output_dir,
         "prompt_sha256": hashlib.sha256((prompt or "").encode("utf-8")).hexdigest(),
         "agents_md_sha256": _sha256_file(agents_path),
         "git_revision": _git_head(root),
         "skills_root": str(skills_dir),
         "skills_count": len(discovered_skills),
+        "skills_version": skills_version,
         "skills_revision_hash": registry.compute_revision_hash(),
+        "skills_preflight": skills_preflight,
         "mcp_config_sha256": _sha256_file(cfg_path),
         "mcp_lifecycle_version": mcp_version,
         "mcp_server_info": dict(mcp_server_info or {}),
+        "blender_version": blender_version,
         "discovered_tools": list(discovered_tools or []),
+        "reference_assets_sha256": ref_hashes,
         "preflight": preflight,
         "run_environment": {
             "model_id": model_id,
@@ -118,6 +137,7 @@ def build_reproducibility_manifest(
             "variant": variant,
             "reasoning_settings": reasoning_settings,
             "hardware_info": hardware_info,
+            "blender_version": blender_version,
         },
     }
 
@@ -128,11 +148,12 @@ def evaluate_character_gates(
     gate_a_review: dict[str, Any],
     gate_b_review: dict[str, Any] | None = None,
     gate_c_review: dict[str, Any] | None = None,
+    strict_evidence: bool = False,
 ) -> dict[str, Any]:
     """Coordinate mandatory Gate A -> Gate B -> Gate C evaluation."""
-    gate_a = bp.evaluate_gate_a(preflight, gate_a_review)
-    gate_b = bp.evaluate_gate_b(gate_a, gate_b_review or {})
-    gate_c = bp.evaluate_gate_c(gate_b, gate_c_review or {})
+    gate_a = bp.evaluate_gate_a(preflight, gate_a_review, strict_evidence=strict_evidence)
+    gate_b = bp.evaluate_gate_b(gate_a, gate_b_review or {}, strict_evidence=strict_evidence)
+    gate_c = bp.evaluate_gate_c(gate_b, gate_c_review or {}, strict_evidence=strict_evidence)
     final_approved = (
         gate_a["modeling_quality_status"] == "PASS"
         and gate_b["status"] == "PASS"
@@ -149,6 +170,23 @@ def evaluate_character_gates(
     }
 
 
+def evaluate_verified_character_gates(
+    preflight: dict[str, Any],
+    *,
+    gate_a_review: dict[str, Any],
+    gate_b_review: dict[str, Any] | None = None,
+    gate_c_review: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Strict Gate A -> B -> C coordinator requiring cryptographic VisualReviewEvidence."""
+    return evaluate_character_gates(
+        preflight,
+        gate_a_review=gate_a_review,
+        gate_b_review=gate_b_review,
+        gate_c_review=gate_c_review,
+        strict_evidence=True,
+    )
+
+
 def evaluate_asset_qa(
     *,
     rendered_images: list[str],
@@ -158,9 +196,18 @@ def evaluate_asset_qa(
     major_defects: list[str],
     technical_checks_passed: bool,
     within_poly_budget: bool,
+    review_evidence: dict[str, Any] | VisualReviewEvidence | None = None,
+    expected_policy_digest: str | None = None,
+    verify_files_on_disk: bool = True,
 ) -> dict[str, Any]:
-    """Evaluate static asset QA without confusing rendered file existence with visual inspection."""
+    """Evaluate static asset QA requiring verifiable visual review evidence (anti-forging)."""
     reasons: list[str] = []
+    ev_check = verify_visual_review_evidence(
+        review_evidence,
+        expected_policy_digest=expected_policy_digest,
+        verify_files_on_disk=verify_files_on_disk,
+    )
+
     if not rendered_images:
         status = "NOT_VERIFIED"
         reasons.append("No rendered or viewport screenshots captured.")
@@ -178,6 +225,9 @@ def evaluate_asset_qa(
             reasons.append("Technical export/mesh checks failed.")
         if not within_poly_budget:
             reasons.append("Asset exceeds polygon budget.")
+    elif not ev_check["valid"]:
+        status = str(ev_check["status_if_invalid"])
+        reasons.extend(ev_check["reasons"])
     elif not findings:
         status = "NOT_VERIFIED"
         reasons.append("Visual review findings must be recorded explicitly.")
@@ -186,6 +236,7 @@ def evaluate_asset_qa(
 
     return {
         "status": status,
+        "evidence_verified": ev_check["valid"],
         "rendered_images": rendered_images,
         "visually_inspected": visually_inspected,
         "independent_reviewer": independent_reviewer,

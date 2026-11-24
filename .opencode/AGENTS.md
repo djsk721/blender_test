@@ -57,15 +57,21 @@ Apply identically across all LLMs/providers (no model-specific routing):
 
 Run `scripts/benchmark_preflight.py` (or `blender_orchestration`) before modeling to record preflight JSON without hardcoding results.
 
-## 6. Mandatory Quality Gates & Independent Visual QA
+## 6. 11-Stage Character Pipeline, QA Profiles & Mandatory Quality Gates
 
-- **Gate A — Modeling Quality** (renders required): silhouette, face/eyes, hair, body proportions, hands/wrists, costume/accessories, materials, topology/poly budget, text-spec compliance (plus reference match in `REFERENCE_GUIDED`). Fail or uninspected blocks Gate B.
-- **Gate B — Rigging & Deformation** (only after Gate A passes): bone hierarchy, skin weights, joint deformation, mesh continuity, cloth/hair deformation. Fails block Gate C.
+Execute character assets through 11 explicit stages with clear inputs, outputs, and validation gates (`blender_orchestration/production_pipeline.py`):
+1. Production Brief & Character Identity -> 2. Silhouette & Proportion Blockout -> 3. Face, Body, Hands & Costume Modeling -> 4. Hair Groom & Sculpt Form Refinement -> 5. Modeling Visual QA & Bounded Repair Loop (**Gate A**) -> 6. Topology, UV & Material Validation -> 7. Rigging & Skin Weights -> 8. Joint Deformation QA (**Gate B**) -> 9. Animation Production -> 10. Animation Visual QA (**Gate C**) -> 11. Final Optimization & Export.
+
+- **Asset-Type QA Profiles (`blender_orchestration/qa_profiles.py`)**: Select `HUMANOID_CHARACTER`, `ANIMATED_CHARACTER`, `CREATURE`, `HARD_SURFACE_PROP`, or `ENVIRONMENT`. Never apply ship/hull/metal-panel/greeble/mechanical criteria to characters.
+- **No Primitive Stacking or Raw Poly Inflation**: Reject discrete stacked UV spheres/cylinders/ropes as finished character sculpting (`hair-groom` requires scalp coverage + sculpted clumps; `character-artist` requires recessed eye sockets, articulated palm/finger grip, fitted costume seams, and contoured boots). Increasing polygon count without resolving defects fails QA.
+- **Gate A — Modeling Quality** (renders required): silhouette, face/eyes, hair, body proportions, hands/wrists, costume/boots, materials, topology/poly budget, text-spec compliance (plus reference match >= 8/10 in `REFERENCE_GUIDED`). **Any Gate A `FAIL` or `NOT_VERIFIED` hard-blocks Stages 6–11, Gate B, Gate C, and final export.**
+- **Gate B — Rigging & Deformation** (only after Gate A passes): bone hierarchy, skin weights, joint deformation, mesh continuity, cloth/hair deformation. Fails block Gate C and export.
 - **Gate C — Animation** (only after Gate B passes): playback evidence, contact/flight phases, root stability, loop continuity, arm/leg coordination, foot sliding/clipping.
+- **Bounded Visual Repair Loop (`blender_orchestration/visual_qa.py`)**: Record every defect as a structured `VisualDefect` -> map to localized `BlenderFixAction` preserving existing Blender scene state -> re-render -> verify before/after improvement (max 3 fix iterations; pure re-renders do not count; stalled duplicate fixes halt as `FAIL`).
 - **Final Technical Validation**: editable `.blend`, GLB/FBX export, skeleton/animation check, fresh-scene reimport check, engine check where available.
-- **Independent Visual QA**: Rendered file on disk != visually inspected. Implementation agent must not act as sole final visual approver; unavailable reviewer -> `NOT_VERIFIED`; major defects -> `FAIL`.
+- **Independent Visual QA (Anti-Forging)**: Bare `visually_inspected=true` / `independent_reviewer=true` booleans cannot pass QA. Require `VisualReviewEvidence` binding render SHA-256 hashes, per-image observations, distinct `reviewer_context_id != producer_context_id`, timestamp, target asset SHA-256, and immutable `approval_policy_digest`. Unavailable reviewer -> `NOT_VERIFIED`; major defects -> `FAIL`.
 
 ## 7. Benchmark Isolation, Lifecycle Safety & Reproducibility
 
 - Keep Blender MCP Lazy Loading, detached watchdog cleanup, GPU health/CPU fallback, and global `~/.config/opencode/opencode.json` unchanged. Never disturb unrelated GPU services (`strata`, `ollama`).
-- Start every benchmark in a clean scene & isolated `YYYYMMDD_HHMMSS_MODELNAME` workspace; never inspect/reuse prior GPT/Qwen runs. Record prompt hash, `AGENTS.md` hash, Skills revision hash, MCP config/version, model/provider/variant, reasoning/hardware settings, and runtime metrics honestly; never claim strict equivalence when uncontrolled factors differ.
+- Start every benchmark in a clean scene & isolated `YYYYMMDD_HHMMSS_MODELNAME` workspace; never inspect/reuse prior model runs or `output/zelda_reference/`. Verify `.opencode/skills/` via `benchmark_preflight.py` before execution. Record prompt hash, `AGENTS.md` hash, Skills revision hash, Blender/MCP versions, model/provider/variant, reasoning/hardware settings, skill/MCP efficiency metrics, QA fix history, and stage timings honestly; never claim direct cross-model comparison when prompts or references differ.

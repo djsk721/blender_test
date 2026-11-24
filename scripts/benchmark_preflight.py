@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -19,9 +20,31 @@ import sys
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 DEFAULT_AGENTS_MD = PROJECT_ROOT / ".opencode" / "AGENTS.md"
 DEFAULT_SKILLS_ROOT = PROJECT_ROOT / ".opencode" / "skills"
 DEFAULT_VERSION_FILE = PROJECT_ROOT / ".opencode" / "mcp" / "blender" / "VERSION"
+
+REQUIRED_CORE_SKILLS: tuple[str, ...] = (
+    "blender-director",
+    "character-artist",
+    "sculpting",
+    "retopology",
+    "hair-groom",
+    "uv-workflow",
+    "materials",
+    "texture-workflow",
+    "lighting",
+    "rendering",
+    "rigging",
+    "animation",
+    "qa-review",
+    "asset-optimization",
+    "export-pipeline",
+)
+
+_RUN_ID_PATTERN = re.compile(r"^\d{8}_\d{6}_[A-Za-z0-9._-]+$")
 
 SUPPORTED_PRODUCTION_MODES = ("TEXT_ONLY", "REFERENCE_GUIDED")
 
@@ -371,7 +394,25 @@ def resolve_preflight_policy(
     )
 
 
-def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[str, Any]:
+def _verify_review_evidence_payload(review: dict[str, Any]) -> tuple[bool, str | None, list[str]]:
+    """Validate embedded visual_evidence / review_evidence using anti-forging checks."""
+    raw_ev = review.get("visual_evidence") if "visual_evidence" in review else review.get("review_evidence")
+    try:
+        from blender_orchestration.visual_qa import verify_visual_review_evidence
+    except ImportError:
+        return False, "NOT_VERIFIED", ["blender_orchestration.visual_qa is unavailable to verify visual evidence."]
+
+    res = verify_visual_review_evidence(
+        raw_ev,
+        expected_policy_digest=review.get("expected_policy_digest"),
+        verify_files_on_disk=bool(review.get("verify_files_on_disk", True)),
+    )
+    if res["valid"]:
+        return True, None, []
+    return False, str(res["status_if_invalid"]), list(res["reasons"])
+
+
+def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any], *, strict_evidence: bool = False) -> dict[str, Any]:
     """Evaluate Gate A (Modeling Quality) and separate Exact Identity Fidelity."""
     mode = preflight.get("benchmark_mode")
     reasons: list[str] = []
@@ -387,6 +428,7 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
             "exact_identity_fidelity_status": identity_status,
             "rigging_eligible": False,
             "animation_eligible": False,
+            "evidence_verified": False,
             "reasons": reasons,
         }
 
@@ -394,6 +436,16 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
     independent_reviewer = bool(review.get("independent_reviewer"))
     major_defects = list(review.get("major_defects") or [])
     dimensions = dict(review.get("dimensions") or {})
+
+    has_embedded_evidence = ("visual_evidence" in review) or ("review_evidence" in review)
+    evidence_verified = False
+    evidence_invalid_status: str | None = None
+    if strict_evidence or has_embedded_evidence:
+        ev_ok, ev_status, ev_reasons = _verify_review_evidence_payload(review)
+        evidence_verified = ev_ok
+        if not ev_ok:
+            evidence_invalid_status = ev_status or "NOT_VERIFIED"
+            reasons.extend(ev_reasons)
 
     failed_dims = [dim for dim in GATE_A_DIMENSIONS if dimensions.get(dim) == "FAIL"]
     missing_dims = [dim for dim in GATE_A_DIMENSIONS if dimensions.get(dim) not in ("PASS", "FAIL")]
@@ -409,6 +461,8 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
             reasons.append(f"Major modeling defects reported: {', '.join(major_defects)}")
         if failed_dims:
             reasons.append(f"Failed Gate A dimensions: {', '.join(failed_dims)}")
+    elif evidence_invalid_status is not None:
+        modeling_status = evidence_invalid_status
     elif not rendered_inspected or not independent_reviewer:
         modeling_status = "NOT_VERIFIED"
         if not rendered_inspected:
@@ -433,6 +487,8 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
         if not approved_refs_used:
             exact_identity_status = "BLOCKED"
             reasons.append("Approved reference images were not used in REFERENCE_GUIDED review.")
+        elif evidence_invalid_status is not None:
+            exact_identity_status = evidence_invalid_status
         elif not rendered_inspected or not independent_reviewer or not ref_compared:
             exact_identity_status = "NOT_VERIFIED"
             reasons.append("Independent rendered comparison against approved references is missing.")
@@ -457,11 +513,12 @@ def evaluate_gate_a(preflight: dict[str, Any], review: dict[str, Any]) -> dict[s
         "exact_identity_fidelity_status": exact_identity_status,
         "rigging_eligible": rigging_eligible,
         "animation_eligible": False,
+        "evidence_verified": evidence_verified,
         "reasons": reasons,
     }
 
 
-def evaluate_gate_b(gate_a_result: dict[str, Any], review: dict[str, Any]) -> dict[str, Any]:
+def evaluate_gate_b(gate_a_result: dict[str, Any], review: dict[str, Any], *, strict_evidence: bool = False) -> dict[str, Any]:
     """Evaluate Gate B (Rigging and Deformation)."""
     reasons: list[str] = []
     if not gate_a_result.get("rigging_eligible"):
@@ -470,6 +527,7 @@ def evaluate_gate_b(gate_a_result: dict[str, Any], review: dict[str, Any]) -> di
             "gate": "GATE_B",
             "status": "BLOCKED",
             "animation_eligible": False,
+            "evidence_verified": False,
             "reasons": reasons,
         }
 
@@ -478,12 +536,24 @@ def evaluate_gate_b(gate_a_result: dict[str, Any], review: dict[str, Any]) -> di
     major_defects = list(review.get("major_defects") or [])
     checks = dict(review.get("checks") or {})
 
+    has_embedded_evidence = ("visual_evidence" in review) or ("review_evidence" in review)
+    evidence_verified = False
+    evidence_invalid_status: str | None = None
+    if strict_evidence or has_embedded_evidence:
+        ev_ok, ev_status, ev_reasons = _verify_review_evidence_payload(review)
+        evidence_verified = ev_ok
+        if not ev_ok:
+            evidence_invalid_status = ev_status or "NOT_VERIFIED"
+            reasons.extend(ev_reasons)
+
     failed = [c for c in GATE_B_CHECKS if checks.get(c) == "FAIL"]
     missing = [c for c in GATE_B_CHECKS if checks.get(c) not in ("PASS", "FAIL")]
 
     if major_defects or failed:
         status = "FAIL"
         reasons.append(f"Rigging/deformation defects: {', '.join(major_defects + failed)}")
+    elif evidence_invalid_status is not None:
+        status = evidence_invalid_status
     elif not rendered_inspected or not independent_reviewer or missing:
         status = "NOT_VERIFIED"
         reasons.append("Gate B requires independent rendered deformation inspection across all checks.")
@@ -494,11 +564,12 @@ def evaluate_gate_b(gate_a_result: dict[str, Any], review: dict[str, Any]) -> di
         "gate": "GATE_B",
         "status": status,
         "animation_eligible": status == "PASS",
+        "evidence_verified": evidence_verified,
         "reasons": reasons,
     }
 
 
-def evaluate_gate_c(gate_b_result: dict[str, Any], review: dict[str, Any]) -> dict[str, Any]:
+def evaluate_gate_c(gate_b_result: dict[str, Any], review: dict[str, Any], *, strict_evidence: bool = False) -> dict[str, Any]:
     """Evaluate Gate C (Animation)."""
     reasons: list[str] = []
     if not gate_b_result.get("animation_eligible"):
@@ -507,6 +578,7 @@ def evaluate_gate_c(gate_b_result: dict[str, Any], review: dict[str, Any]) -> di
             "gate": "GATE_C",
             "status": "BLOCKED",
             "export_eligible": False,
+            "evidence_verified": False,
             "reasons": reasons,
         }
 
@@ -515,12 +587,24 @@ def evaluate_gate_c(gate_b_result: dict[str, Any], review: dict[str, Any]) -> di
     major_defects = list(review.get("major_defects") or [])
     checks = dict(review.get("checks") or {})
 
+    has_embedded_evidence = ("visual_evidence" in review) or ("review_evidence" in review)
+    evidence_verified = False
+    evidence_invalid_status: str | None = None
+    if strict_evidence or has_embedded_evidence:
+        ev_ok, ev_status, ev_reasons = _verify_review_evidence_payload(review)
+        evidence_verified = ev_ok
+        if not ev_ok:
+            evidence_invalid_status = ev_status or "NOT_VERIFIED"
+            reasons.extend(ev_reasons)
+
     failed = [c for c in GATE_C_CHECKS if checks.get(c) == "FAIL"]
     missing = [c for c in GATE_C_CHECKS if checks.get(c) not in ("PASS", "FAIL")]
 
     if major_defects or failed:
         status = "FAIL"
         reasons.append(f"Animation defects: {', '.join(major_defects + failed)}")
+    elif evidence_invalid_status is not None:
+        status = evidence_invalid_status
     elif not rendered_inspected or not independent_reviewer or missing:
         status = "NOT_VERIFIED"
         reasons.append("Gate C requires independent full-playback inspection across all checks.")
@@ -531,7 +615,80 @@ def evaluate_gate_c(gate_b_result: dict[str, Any], review: dict[str, Any]) -> di
         "gate": "GATE_C",
         "status": status,
         "export_eligible": status == "PASS",
+        "evidence_verified": evidence_verified,
         "reasons": reasons,
+    }
+
+
+def validate_required_skills(
+    skills_root: Path | None = None,
+    required_skills: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, Any]:
+    """Verify gitignored .opencode/skills/ installation and surface remediation if missing."""
+    root = Path(skills_root) if skills_root is not None else DEFAULT_SKILLS_ROOT
+    req = list(required_skills) if required_skills is not None else list(REQUIRED_CORE_SKILLS)
+    if not root.is_dir():
+        return {
+            "skills_root": str(root),
+            "installed": False,
+            "status": "SKILLS_MISSING",
+            "missing_skills": req,
+            "shared_references_present": False,
+            "remediation_steps": [
+                "Clone or locate upstream arjun988/blender-skills (.claude/skills).",
+                f"Run ./scripts/install.sh --with-orchestration --skills-source <skills_dir> {PROJECT_ROOT}",
+                "Do NOT claim skills were applied when .opencode/skills/ is absent.",
+            ],
+        }
+
+    missing = [sid for sid in req if not (root / sid / "SKILL.md").is_file()]
+    refs_ok = (root / "references" / "asset-pipeline.md").is_file()
+    installed = (len(missing) == 0) and refs_ok
+    return {
+        "skills_root": str(root),
+        "installed": installed,
+        "status": "READY" if installed else "SKILLS_MISSING",
+        "missing_skills": missing,
+        "shared_references_present": refs_ok,
+        "remediation_steps": (
+            []
+            if installed
+            else [
+                f"Missing required Blender Skills in {root}: {', '.join(missing) or 'shared references/'}",
+                f"Install via ./scripts/install.sh --with-orchestration --skills-source <skills_dir> {PROJECT_ROOT}",
+            ]
+        ),
+    }
+
+
+def validate_benchmark_run_id(run_id: str) -> bool:
+    """Validate YYYYMMDD_HHMMSS_MODELNAME directory/run naming convention."""
+    return bool(_RUN_ID_PATTERN.match((run_id or "").strip()))
+
+
+def create_isolated_benchmark_workspace(
+    base_dir: Path,
+    model_name: str,
+    *,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Create an isolated YYYYMMDD_HHMMSS_MODELNAME benchmark workspace and runtime dirs."""
+    safe_model = re.sub(r"[^A-Za-z0-9._-]+", "_", (model_name or "model").strip()).strip("_") or "model"
+    ts = timestamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = f"{ts}_{safe_model}"
+    run_dir = Path(base_dir) / run_id
+    runtime_dir = run_dir / "mcp_runtime"
+    renders_dir = run_dir / "renders"
+    checkpoints_dir = run_dir / "checkpoints"
+    for d in (run_dir, runtime_dir, renders_dir, checkpoints_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    return {
+        "run_id": run_id,
+        "run_id_format_valid": validate_benchmark_run_id(run_id),
+        "run_dir": str(run_dir),
+        "runtime_dir": str(runtime_dir),
+        "renders_dir": str(renders_dir),
+        "checkpoints_dir": str(checkpoints_dir),
     }
 
 
@@ -557,10 +714,15 @@ def build_benchmark_metadata(
     inference_backend: str = "",
     hardware_allocation: str = "",
     runtime_environment: str = "",
+    blender_version: str = "",
+    mcp_server_version: str = "",
+    skills_version: str = "",
     agents_md_path: Path | None = None,
     skills_root: Path | None = None,
     supplied_references: list[str] | None = None,
     text_specification: str | None = None,
+    runtime_metrics: dict[str, Any] | None = None,
+    repair_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build benchmark run metadata storing preflight resolution, hashes, and run parameters."""
     # Preflight is computed without model/provider to guarantee model independence.
@@ -572,13 +734,26 @@ def build_benchmark_metadata(
         supplied_references=supplied_references,
         text_specification=text_specification,
     )
+    skills_preflight = validate_required_skills(resolved_skills)
+    ref_hashes: dict[str, str | None] = {}
+    for ref_str in (supplied_references or []):
+        rp = Path(ref_str)
+        ref_hashes[ref_str] = hashlib.sha256(rp.read_bytes()).hexdigest() if rp.is_file() else None
+
     return {
         "run_id": run_id,
+        "run_id_format_valid": validate_benchmark_run_id(run_id),
         "prompt_sha256": hashlib.sha256((prompt or "").encode("utf-8")).hexdigest(),
         "agents_md_sha256": hashlib.sha256(resolved_agents.read_bytes()).hexdigest() if resolved_agents.is_file() else None,
         "skills_revision_hash": _compute_skills_hash(resolved_skills),
+        "skills_version": skills_version or None,
+        "skills_preflight": skills_preflight,
         "mcp_lifecycle_version": DEFAULT_VERSION_FILE.read_text(encoding="utf-8").strip() if DEFAULT_VERSION_FILE.is_file() else None,
+        "blender_version": blender_version or None,
+        "mcp_server_version": mcp_server_version or None,
+        "reference_assets_sha256": ref_hashes,
         "preflight": preflight,
+        "repair_policy": dict(repair_policy or {}),
         "run_environment": {
             "model_id": model_id,
             "provider": provider,
@@ -587,7 +762,10 @@ def build_benchmark_metadata(
             "inference_backend": inference_backend,
             "hardware_allocation": hardware_allocation,
             "runtime_environment": runtime_environment,
+            "blender_version": blender_version,
+            "mcp_server_version": mcp_server_version,
         },
+        "runtime_metrics": dict(runtime_metrics or {}),
         "qa_gates": {
             "gate_a": None,
             "gate_b": None,
@@ -596,8 +774,36 @@ def build_benchmark_metadata(
     }
 
 
+def _extract_separated_metrics(meta: dict[str, Any]) -> dict[str, Any]:
+    rt = dict(meta.get("runtime_metrics") or {})
+    gates = dict(meta.get("qa_gates") or {})
+    return {
+        "quality": {
+            "gate_a": gates.get("gate_a"),
+            "gate_b": gates.get("gate_b"),
+            "gate_c": gates.get("gate_c"),
+            "final_quality_summary": rt.get("final_quality_summary"),
+            "qa_failure_count": rt.get("qa_failure_count", 0),
+            "qa_fix_history": rt.get("qa_fix_history", []),
+        },
+        "runtime": {
+            "total_runtime_sec": rt.get("total_runtime_sec"),
+            "stage_durations_sec": rt.get("stage_durations_sec", {}),
+            "compaction_events": rt.get("compaction_events", "unavailable"),
+        },
+        "tool_efficiency": {
+            "skill_call_count": rt.get("skill_call_count", 0),
+            "mcp_tool_call_count": rt.get("mcp_tool_call_count", 0),
+            "python_execution_count": rt.get("python_execution_count", 0),
+            "blender_error_count": rt.get("blender_error_count", 0),
+            "retry_count": rt.get("retry_count", 0),
+            "modeling_iteration_count": rt.get("modeling_iteration_count", 0),
+        },
+    }
+
+
 def compare_run_environments(meta_a: dict[str, Any], meta_b: dict[str, Any]) -> dict[str, Any]:
-    """Compare uncontrollable execution factors across two benchmark runs."""
+    """Compare benchmark runs across prompt/reference parity, uncontrolled factors, and separated metrics."""
     env_a = dict(meta_a.get("run_environment") or {})
     env_b = dict(meta_b.get("run_environment") or {})
     tracked_fields = (
@@ -616,10 +822,37 @@ def compare_run_environments(meta_a: dict[str, Any], meta_b: dict[str, Any]) -> 
         if va != vb:
             differences[field] = {"run_a": va, "run_b": vb}
 
+    identical_preflight = meta_a.get("preflight") == meta_b.get("preflight")
+    identical_prompt = meta_a.get("prompt_sha256") == meta_b.get("prompt_sha256")
+    identical_refs = meta_a.get("reference_assets_sha256", {}) == meta_b.get("reference_assets_sha256", {})
+    identical_agents_skills = (
+        meta_a.get("agents_md_sha256") == meta_b.get("agents_md_sha256")
+        and meta_a.get("skills_revision_hash") == meta_b.get("skills_revision_hash")
+    )
+
+    disq: list[str] = []
+    if not identical_prompt:
+        disq.append("Prompt SHA-256 differs between runs; direct comparison is unfair.")
+    if not identical_refs:
+        disq.append("Supplied reference assets differ between runs; direct comparison is unfair.")
+    if not identical_preflight:
+        disq.append("Resolved preflight policies differ between runs.")
+    if not identical_agents_skills:
+        disq.append("AGENTS.md or Blender Skills revision hash differs between runs.")
+
     return {
-        "identical_preflight_policy": meta_a.get("preflight") == meta_b.get("preflight"),
+        "identical_preflight_policy": identical_preflight,
+        "identical_prompt": identical_prompt,
+        "identical_references": identical_refs,
+        "identical_agents_and_skills": identical_agents_skills,
+        "fair_direct_comparison_allowed": len(disq) == 0,
+        "disqualification_reasons": disq,
         "uncontrolled_differences": differences,
-        "strict_experimental_equivalence_claimable": len(differences) == 0,
+        "strict_experimental_equivalence_claimable": len(differences) == 0 and len(disq) == 0,
+        "separated_metrics": {
+            "run_a": _extract_separated_metrics(meta_a),
+            "run_b": _extract_separated_metrics(meta_b),
+        },
     }
 
 

@@ -137,6 +137,10 @@ ORCHESTRATION_REL_FILES = [
     "blender_orchestration/mcp_adapter.py",
     "blender_orchestration/scene_ops.py",
     "blender_orchestration/pipeline.py",
+    "blender_orchestration/qa_profiles.py",
+    "blender_orchestration/visual_qa.py",
+    "blender_orchestration/production_pipeline.py",
+    "blender_orchestration/regression_fixtures.py",
     "scripts/benchmark_preflight.py",
 ]
 
