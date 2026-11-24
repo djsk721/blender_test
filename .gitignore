@@ -8,10 +8,9 @@ mcp/blender/backups/
 *.lock
 *.bak
 
-# Workspace-local OpenCode skills/agents/rules (preserved on disk, excluded from reusable repo)
+# Workspace-local OpenCode skills/agents (preserved on disk, excluded from reusable repo)
 .opencode/skills/
 .opencode/agents/
-.opencode/AGENTS.md
 
 # Generated 3D assets, renders, and Blender auto-saves
 *.blend
