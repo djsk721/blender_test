@@ -74,31 +74,37 @@ def _eval_mesh_world_verts(obj: Any) -> tuple[list[Any], Any]:
 
 def _auto_detect_front_axis(obj: Any) -> float:
     """Estimate Z rotation (degrees) needed to orient a humanoid mesh to face -Y."""
-    xs = [v.co.x for v in obj.data.vertices]
-    ys = [v.co.y for v in obj.data.vertices]
     zs = [v.co.z for v in obj.data.vertices]
     if not zs:
         return 0.0
     z0, z1 = min(zs), max(zs)
     h = max(z1 - z0, 1e-4)
-    # Use nose/face region (~88% to 95% height): forward side extends farther from center Y than X
-    face_pts = [v.co for v in obj.data.vertices if 0.87 <= (v.co.z - z0) / h <= 0.95]
+
+    # Determine lateral (shoulder-to-shoulder) axis from torso/arms band (0.50..0.85 height)
+    upper_pts = [v.co for v in obj.data.vertices if 0.50 <= (v.co.z - z0) / h <= 0.85] or list(
+        v.co for v in obj.data.vertices
+    )
+    upper_span_x = max(p.x for p in upper_pts) - min(p.x for p in upper_pts)
+    upper_span_y = max(p.y for p in upper_pts) - min(p.y for p in upper_pts)
+
     foot_pts = [v.co for v in obj.data.vertices if (v.co.z - z0) / h <= 0.05]
-    probe = foot_pts if len(foot_pts) >= 8 else face_pts
+    ankle_pts = [v.co for v in obj.data.vertices if 0.05 < (v.co.z - z0) / h <= 0.10]
+    probe = foot_pts if len(foot_pts) >= 8 else [v.co for v in obj.data.vertices if 0.87 <= (v.co.z - z0) / h <= 0.95]
     if not probe:
         return 0.0
-    avg_x = sum(p.x for p in probe) / len(probe)
-    avg_y = sum(p.y for p in probe) / len(probe)
-    max_pos_y = max(p.y for p in probe) - avg_y
-    max_neg_y = avg_y - min(p.y for p in probe)
-    max_pos_x = max(p.x for p in probe) - avg_x
-    max_neg_x = avg_x - min(p.x for p in probe)
-    span_x = max(abs(p.x - avg_x) for p in probe)
-    span_y = max(abs(p.y - avg_y) for p in probe)
-    # Feet/nose typically extend farther along the forward axis than backward
-    if span_y >= span_x:
+
+    if upper_span_x >= upper_span_y:
+        # Left-right is already along X; forward is either -Y (0 deg) or +Y (180 deg)
+        ref_y = (sum(p.y for p in ankle_pts) / len(ankle_pts)) if ankle_pts else (sum(p.y for p in probe) / len(probe))
+        max_pos_y = max(p.y for p in probe) - ref_y
+        max_neg_y = ref_y - min(p.y for p in probe)
         return 180.0 if max_pos_y > max_neg_y else 0.0
-    return 90.0 if max_pos_x > max_neg_x else -90.0
+
+    # Left-right is along Y; forward is +X (-90 deg turns +X to -Y) or -X (+90 deg turns -X to -Y)
+    ref_x = (sum(p.x for p in ankle_pts) / len(ankle_pts)) if ankle_pts else (sum(p.x for p in probe) / len(probe))
+    max_pos_x = max(p.x for p in probe) - ref_x
+    max_neg_x = ref_x - min(p.x for p in probe)
+    return -90.0 if max_pos_x > max_neg_x else 90.0
 
 
 def verify_and_load_base_mesh(
@@ -681,24 +687,24 @@ def extract_garment_from_body(
     return obj
 
 
-def _ensure_hair_bevel_profile(name: str = "CURVE_HairStrandProfile") -> Any:
-    """Create a reusable sculpted crescent/teardrop bevel profile curve (NOT a circular tube!)."""
+def _ensure_hair_bevel_profile(name: str = "CURVE_HairStrandProfile_v2") -> Any:
+    """Create a reusable sculpted thick crescent/arch bevel profile curve (NOT a thin wire or tube!)."""
     old = bpy.data.objects.get(name)
     if old is not None:
         return old
     cdata = bpy.data.curves.new(name + "_Data", type="CURVE")
     cdata.dimensions = "2D"
-    cdata.resolution_u = 6
+    cdata.resolution_u = 8
     sp = cdata.splines.new("POLY")
     pts = [
-        (0.0, 0.010),
-        (0.018, 0.006),
-        (0.026, -0.002),
-        (0.012, -0.009),
-        (0.0, -0.006),
-        (-0.012, -0.009),
-        (-0.026, -0.002),
-        (-0.018, 0.006),
+        (0.0, 0.013),
+        (0.025, 0.008),
+        (0.036, -0.002),
+        (0.018, -0.012),
+        (0.0, -0.008),
+        (-0.018, -0.012),
+        (-0.036, -0.002),
+        (-0.025, 0.008),
     ]
     sp.points.add(len(pts) - 1)
     for i, (px, py) in enumerate(pts):
@@ -710,6 +716,18 @@ def _ensure_hair_bevel_profile(name: str = "CURVE_HairStrandProfile") -> Any:
     pobj.hide_render = True
     pobj.hide_viewport = True
     return pobj
+
+
+def _clamp_hair_point(pt: Any, head_top_z: float) -> Any:
+    """Prevent runaway spike hair curve coordinates above crown or below feet."""
+    v = Vector(pt)
+    return Vector(
+        (
+            max(-0.45, min(0.45, float(v.x))),
+            max(-0.45, min(0.45, float(v.y))),
+            max(0.12, min(float(head_top_z) + 0.14, float(v.z))),
+        )
+    )
 
 
 def build_layered_curve_hair(
@@ -769,6 +787,13 @@ def build_layered_curve_hair(
         for v in list(bm.verts):
             if not v.link_faces:
                 bm.verts.remove(v)
+        # Gently tuck boundary edges inward so the scalp cap blends naturally without a helmet brim
+        head_cx_vec = Vector((float(lm["head_center"][0]), float(head_cy), float(lm["head_center"][2])))
+        for v in bm.verts:
+            if v.is_boundary:
+                radial = (head_cx_vec - v.co)
+                if radial.length > 1e-4:
+                    v.co += radial.normalized() * min(scalp_offset_m * 0.55, 0.006)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
         scalp_obj = bt._finalize_bmesh_object(f"{name_prefix}_ScalpCap", bm, collection=col, smooth=True, subsurf=0)
         bt.add_modifiers(scalp_obj, solidify=scalp_thickness_m, solidify_offset=1.0, subsurf=1)
@@ -798,8 +823,8 @@ def build_layered_curve_hair(
         sp.bezier_points.add(len(pts) - 1)
         for pi, pt in enumerate(pts):
             bp = sp.bezier_points[pi]
-            bp.co = Vector(pt)
-            bp.radius = max(0.05, float(radii[min(pi, len(radii) - 1)]) * bevel_scale)
+            bp.co = _clamp_hair_point(pt, head_top_z)
+            bp.radius = max(0.08, float(radii[min(pi, len(radii) - 1)]) * bevel_scale)
             bp.tilt = math.radians(float(tilts[min(pi, len(tilts) - 1)]))
             bp.handle_left_type = "AUTO"
             bp.handle_right_type = "AUTO"
@@ -823,12 +848,12 @@ def build_layered_curve_hair(
         created_objs.append(joined_locks)
 
     for b_idx, bspec in enumerate(braid_paths or []):
-        pts = bspec.get("points") or []
+        pts = [_clamp_hair_point(p, head_top_z) for p in (bspec.get("points") or [])]
         if len(pts) >= 2:
             bobj = bt.build_interwoven_braid(
                 f"{name_prefix}_Braid_{b_idx}",
-                pts,
-                radius=float(bspec.get("radius", 0.014)),
+                [(float(p.x), float(p.y), float(p.z)) for p in pts],
+                radius=float(bspec.get("radius", 0.015)),
                 twists=float(bspec.get("twists", 7.0)),
                 collection=col,
             )
@@ -922,3 +947,169 @@ def pose_hand_and_attach_prop(
         "grip_pocket_world": [round(grip_pocket.x, 4), round(grip_pocket.y, 4), round(grip_pocket.z, 4)],
         "prop_attached": prop_obj.name if prop_obj is not None else None,
     }
+
+
+def pose_arm_for_prop_hold(
+    body_obj: Any,
+    side: str = "L",
+    *,
+    shoulder_pitch_deg: float = 32.0,
+    shoulder_inward_deg: float = 18.0,
+    elbow_bend_deg: float = 72.0,
+) -> dict[str, Any]:
+    """Smoothly pose the Base Mesh arm forward and inward around shoulder/elbow via SK_Stylization."""
+    _require_blender()
+    from mathutils import Quaternion
+
+    if body_obj.type != "MESH" or body_obj.data is None:
+        raise ValueError("Expected MESH body_obj")
+    side_u = side.upper()
+    if side_u not in ("L", "R"):
+        raise ValueError("side must be 'L' or 'R'")
+    side_sign = 1.0 if side_u == "L" else -1.0
+
+    info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
+    lm = info["landmarks"]
+    sh = Vector(lm[f"shoulder_{side_u}"])
+    el = Vector(lm[f"elbow_{side_u}"])
+    wr = Vector(lm[f"wrist_{side_u}"])
+
+    arm_dir = (el - sh)
+    if arm_dir.length < 1e-4:
+        arm_dir = Vector((side_sign * 0.45, 0.0, -0.88))
+    arm_dir.normalize()
+
+    mesh = body_obj.data
+    if not mesh.shape_keys:
+        body_obj.shape_key_add(name="Basis", from_mix=False)
+    sk = mesh.shape_keys.key_blocks.get("SK_Stylization") or body_obj.shape_key_add(name="SK_Stylization", from_mix=True)
+    sk.value = 1.0
+
+    mat = body_obj.matrix_world
+    inv_mat = mat.inverted()
+
+    # Stage 1: Rotate upper arm + forearm + hand forward (-Y) & slightly inward around shoulder pivot
+    # Rotating (side_sign*X, 0, -Z) around (-1, 0, 0) swings downward arm forward into -Y!
+    q_pitch = Quaternion(Vector((-1.0, 0.0, 0.0)), math.radians(float(shoulder_pitch_deg)))
+    q_in = Quaternion(Vector((0.0, 0.0, -side_sign)), math.radians(float(shoulder_inward_deg)))
+    q_shoulder = q_in @ q_pitch
+
+    moved_sh = 0
+    for i, item in enumerate(sk.data):
+        wp = mat @ item.co
+        if wp.x * side_sign < abs(sh.x) - 0.02:
+            continue
+        along = (wp - sh).dot(arm_dir)
+        perp = ((wp - sh) - arm_dir * along).length
+        if along > -0.04 and perp < 0.13 and wp.z <= sh.z + 0.08:
+            t = max(0.0, min(1.0, (along + 0.03) / 0.08))
+            w = t * t * (3.0 - 2.0 * t)
+            if w > 1e-4:
+                rot_wp = sh + (q_shoulder @ (wp - sh))
+                sk.data[i].co = inv_mat @ wp.lerp(rot_wp, w)
+                moved_sh += 1
+    mesh.update()
+
+    # Re-locate elbow & forearm axis after shoulder rotation
+    el_rot = sh + (q_shoulder @ (el - sh))
+    wr_rot = sh + (q_shoulder @ (wr - sh))
+    fore_dir = (wr_rot - el_rot)
+    if fore_dir.length < 1e-4:
+        fore_dir = arm_dir
+    fore_dir.normalize()
+
+    # Bend forearm smoothly upward & forward (-Y/+Z, slight inward toward torso) around rotated elbow
+    bend_axis = Vector((-1.0, 0.0, -0.25 * side_sign)).normalized()
+    q_elbow = Quaternion(bend_axis, math.radians(float(elbow_bend_deg)))
+
+    moved_el = 0
+    for i, item in enumerate(sk.data):
+        wp = mat @ item.co
+        if wp.x * side_sign < abs(sh.x) - 0.04:
+            continue
+        along_f = (wp - el_rot).dot(fore_dir)
+        perp_f = ((wp - el_rot) - fore_dir * along_f).length
+        if along_f > -0.02 and perp_f < 0.11:
+            t = max(0.0, min(1.0, (along_f + 0.02) / 0.07))
+            w = t * t * (3.0 - 2.0 * t)
+            if w > 1e-4:
+                rot_wp = el_rot + (q_elbow @ (wp - el_rot))
+                sk.data[i].co = inv_mat @ wp.lerp(rot_wp, w)
+                moved_el += 1
+    mesh.update()
+
+    after_lm = inspect_anatomical_regions(body_obj, assign_vertex_groups=True)["landmarks"]
+    return {
+        "side": side_u,
+        "shoulder_vertices_moved": moved_sh,
+        "elbow_vertices_moved": moved_el,
+        f"elbow_{side_u}": after_lm[f"elbow_{side_u}"],
+        f"wrist_{side_u}": after_lm[f"wrist_{side_u}"],
+        f"hand_{side_u}": after_lm[f"hand_{side_u}"],
+    }
+
+
+def audit_base_mesh_integrity(
+    scene: Any,
+    *,
+    body_name: str = "SM_BaseBody",
+    expected_height_m: float = 1.65,
+    export_collection: str = "COL_Export",
+) -> dict[str, Any]:
+    """Verify Base Mesh scale, grounding, orbital eye Z alignment, and outlier bounds deterministically."""
+    _require_blender()
+    issues: list[str] = []
+    col = bpy.data.collections.get(export_collection)
+    body = bpy.data.objects.get(body_name)
+    if body is None or body.type != "MESH":
+        issues.append(f"Base mesh object {body_name!r} is missing.")
+        return {"ok": False, "issues": issues}
+
+    verts_b, _ = _eval_mesh_world_verts(body)
+    if not verts_b:
+        issues.append(f"Base mesh {body_name!r} has 0 vertices.")
+        return {"ok": False, "issues": issues}
+
+    bz_min = min(v.z for v in verts_b)
+    bz_max = max(v.z for v in verts_b)
+    bh = bz_max - bz_min
+    if not (1.35 <= bh <= 1.95):
+        issues.append(f"{body_name} height {bh:.3f}m out of valid range [1.35, 1.95] (never rescale SM_BaseBody!).")
+    if not (-0.03 <= bz_min <= 0.05):
+        issues.append(f"{body_name} min_z={bz_min:.3f}m is ungrounded (expected ~0.0).")
+
+    # Check companion eyes stay seated in head band (never dropped to floor!)
+    head_band_lo = bz_max - 0.35
+    head_band_hi = bz_max + 0.05
+    for ename in (f"{body_name}_Eye_L", f"{body_name}_Eye_R"):
+        eobj = bpy.data.objects.get(ename)
+        if eobj is not None and eobj.type == "MESH":
+            everts, _ = _eval_mesh_world_verts(eobj)
+            if everts:
+                ez_mid = 0.5 * (min(v.z for v in everts) + max(v.z for v in everts))
+                if not (head_band_lo <= ez_mid <= head_band_hi):
+                    issues.append(
+                        f"{ename} dropped out of head sockets (z_mid={ez_mid:.3f}m, expected [{head_band_lo:.2f}, {head_band_hi:.2f}])."
+                    )
+
+    # Check COL_Export for studio object leaks, extreme spikes, or floor debris
+    objs = list(col.all_objects) if col else list(scene.objects)
+    deps = bpy.context.evaluated_depsgraph_get()
+    for o in objs:
+        if o.type != "MESH" or o.hide_render:
+            continue
+        if o.name.startswith("SM_Studio_") or getattr(o, "is_shadow_catcher", False):
+            issues.append(f"Studio object {o.name!r} must NOT be in {export_collection}.")
+            continue
+        eo = o.evaluated_get(deps)
+        corners = [eo.matrix_world @ Vector(c) for c in eo.bound_box]
+        zs = [c.z for c in corners]
+        xs = [c.x for c in corners]
+        ys = [c.y for c in corners]
+        oz_min, oz_max = min(zs), max(zs)
+        if oz_max - oz_min > 2.30 or (max(xs) - min(xs)) > 2.00 or (max(ys) - min(ys)) > 2.00:
+            issues.append(f"Mesh {o.name!r} has extreme spike/extent bounds z=[{oz_min:.2f}..{oz_max:.2f}].")
+        if oz_min < -0.08:
+            issues.append(f"Mesh {o.name!r} extends below ground plane (min_z={oz_min:.2f}m).")
+
+    return {"ok": len(issues) == 0, "issues": issues, "body_height_m": round(bh, 4), "body_min_z_m": round(bz_min, 4)}

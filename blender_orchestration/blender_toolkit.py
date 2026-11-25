@@ -1879,20 +1879,64 @@ def assign_material(obj: Any, mat: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _is_studio_object(obj: Any) -> bool:
+    return bool(
+        obj.name.startswith(("SM_Studio_", "LGT_Studio_", "CAM_Studio_", "CURVE_"))
+        or getattr(obj, "is_shadow_catcher", False)
+    )
+
+
 def _compute_collection_bounds(scene: Any, export_collection: str = "COL_Export") -> dict[str, Any]:
     col = bpy.data.collections.get(export_collection)
-    meshes = [o for o in (col.all_objects if col else scene.objects) if o.type == "MESH" and not o.hide_render]
+    meshes = [
+        o
+        for o in (col.all_objects if col else scene.objects)
+        if o.type == "MESH" and not o.hide_render and not _is_studio_object(o)
+    ]
     if not meshes:
         return {"empty": True, "min": (0.0, 0.0, 0.0), "max": (0.0, 0.0, 1.0), "center": (0.0, 0.0, 0.5), "size": (0.5, 0.5, 1.0)}
     deps = bpy.context.evaluated_depsgraph_get()
+
+    def _box(o: Any) -> tuple[float, float, float, float, float, float]:
+        eo = o.evaluated_get(deps)
+        cs = [eo.matrix_world @ Vector(corner) for corner in eo.bound_box]
+        return (
+            min(c.x for c in cs),
+            min(c.y for c in cs),
+            min(c.z for c in cs),
+            max(c.x for c in cs),
+            max(c.y for c in cs),
+            max(c.z for c in cs),
+        )
+
+    # If SM_BaseBody is present, exclude >1.5m outlier spikes so studio lighting/camera framing stays anchored to character
+    anchor_box = None
+    body_obj = next((o for o in meshes if o.name == "SM_BaseBody"), None)
+    if body_obj is not None:
+        anchor_box = _box(body_obj)
+
     xs, ys, zs = [], [], []
     for o in meshes:
-        eo = o.evaluated_get(deps)
-        for corner in eo.bound_box:
-            wc = eo.matrix_world @ Vector(corner)
-            xs.append(wc.x)
-            ys.append(wc.y)
-            zs.append(wc.z)
+        b = _box(o)
+        if anchor_box is not None and o is not body_obj:
+            if (
+                b[0] < anchor_box[0] - 1.5
+                or b[1] < anchor_box[1] - 1.5
+                or b[2] < anchor_box[2] - 0.5
+                or b[3] > anchor_box[3] + 1.5
+                or b[4] > anchor_box[4] + 1.5
+                or b[5] > anchor_box[5] + 1.0
+            ):
+                continue
+        xs.extend((b[0], b[3]))
+        ys.extend((b[1], b[4]))
+        zs.extend((b[2], b[5]))
+
+    if not xs and anchor_box is not None:
+        xs = [anchor_box[0], anchor_box[3]]
+        ys = [anchor_box[1], anchor_box[4]]
+        zs = [anchor_box[2], anchor_box[5]]
+
     mn = (min(xs), min(ys), min(zs))
     mx = (max(xs), max(ys), max(zs))
     ctr = ((mn[0] + mx[0]) * 0.5, (mn[1] + mx[1]) * 0.5, (mn[2] + mx[2]) * 0.5)
@@ -1905,7 +1949,7 @@ def get_scene_audit(scene: Any, *, export_collection: str = "COL_Export") -> dic
     _require_blender()
     col = bpy.data.collections.get(export_collection)
     objs = list(col.all_objects) if col else list(scene.objects)
-    mesh_objs = [o for o in objs if o.type == "MESH" and not o.hide_render]
+    mesh_objs = [o for o in objs if o.type == "MESH" and not o.hide_render and not _is_studio_object(o)]
     deps = bpy.context.evaluated_depsgraph_get()
 
     meshes_info = []
@@ -2076,12 +2120,22 @@ def _ensure_export_meshes_renderable(scene: Any, export_collection: str = "COL_E
     for vl in scene.view_layers:
         _unexclude(vl.layer_collection)
 
-    # Auto-adopt any non-studio orphan mesh linked only to scene root or subcollections
-    scol = bpy.data.collections.get(studio_collection)
-    studio_objs = set(scol.all_objects) if scol else set()
+    # Actively evict any studio/shadow-catcher objects accidentally linked to COL_Export, and adopt real asset meshes
+    scol = get_or_create_collection(scene, studio_collection)
+    studio_objs = set(scol.all_objects)
+    for obj in list(col.all_objects):
+        if _is_studio_object(obj) or obj in studio_objs:
+            try:
+                col.objects.unlink(obj)
+            except Exception:
+                pass
+            if obj not in studio_objs:
+                scol.objects.link(obj)
+                studio_objs.add(obj)
+
     export_objs = set(col.all_objects)
     for obj in list(scene.objects):
-        if obj.type == "MESH" and obj not in studio_objs and not obj.name.startswith("SM_Studio_"):
+        if obj.type == "MESH" and obj not in studio_objs and not _is_studio_object(obj):
             if obj not in export_objs:
                 col.objects.link(obj)
             obj.hide_render = False
@@ -2467,21 +2521,31 @@ def create_rig_and_bind(
         return (p - (a + ab * t)).length
 
     bound_meshes: list[str] = []
+    _rigid_markers = ("prop", "slate", "tablet", "sword", "weapon", "staff", "lantern", "shield")
     for mobj in candidates:
         mobj.vertex_groups.clear()
         vg_map = {bn: mobj.vertex_groups.new(name=bn) for (bn, _, _) in deform_bones}
         mat_w = mobj.matrix_world
-        for v in mobj.data.vertices:
-            wp = mat_w @ v.co
-            dists = [(bn, _pt_seg_dist(wp, bh, bt)) for (bn, bh, bt) in deform_bones]
-            dists.sort(key=lambda x: x[1])
-            top = dists[:3]
-            weights = [(bn, 1.0 / ((d + 0.015) ** 3.0)) for (bn, d) in top]
-            total = sum(w for _, w in weights) or 1.0
-            for bn, w in weights:
-                norm_w = w / total
-                if norm_w >= 0.02:
-                    vg_map[bn].add([v.index], norm_w, "REPLACE")
+        is_rigid_prop = any(mk in mobj.name.lower() for mk in _rigid_markers)
+        if is_rigid_prop and len(mobj.data.vertices) > 0 and deform_bones:
+            # Bind rigid held props 100% to the single closest hand/wrist (or nearest deform) bone so they never stretch or lag
+            ctr_w = sum((mat_w @ v.co for v in mobj.data.vertices), Vector((0.0, 0.0, 0.0))) / len(mobj.data.vertices)
+            hand_bones = [b for b in deform_bones if any(hk in b[0].lower() for hk in ("hand", "wrist"))]
+            pool = hand_bones or deform_bones
+            best_bn = min(pool, key=lambda b: _pt_seg_dist(ctr_w, b[1], b[2]))[0]
+            vg_map[best_bn].add(list(range(len(mobj.data.vertices))), 1.0, "REPLACE")
+        else:
+            for v in mobj.data.vertices:
+                wp = mat_w @ v.co
+                dists = [(bn, _pt_seg_dist(wp, bh, bt)) for (bn, bh, bt) in deform_bones]
+                dists.sort(key=lambda x: x[1])
+                top = dists[:3]
+                weights = [(bn, 1.0 / ((d + 0.015) ** 3.0)) for (bn, d) in top]
+                total = sum(w for _, w in weights) or 1.0
+                for bn, w in weights:
+                    norm_w = w / total
+                    if norm_w >= 0.02:
+                        vg_map[bn].add([v.index], norm_w, "REPLACE")
         # Add or reuse Armature modifier
         mod = next((m for m in mobj.modifiers if m.type == "ARMATURE"), None) or mobj.modifiers.new("Armature", "ARMATURE")
         mod.object = arm_obj
@@ -2571,7 +2635,7 @@ def export_and_verify_glb(
         col = bpy.data.collections.get(cname)
         if col:
             for obj in col.all_objects:
-                if obj.type in ("MESH", "ARMATURE") and not obj.hide_render:
+                if obj.type in ("MESH", "ARMATURE") and not obj.hide_render and not _is_studio_object(obj):
                     obj.select_set(True)
                     selected.append(obj.name)
                     if obj.type == "MESH":

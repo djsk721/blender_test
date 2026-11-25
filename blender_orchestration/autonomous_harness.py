@@ -110,8 +110,9 @@ Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground
    - Creates body-conforming garments directly from body faces with Solidify/Subsurf and zero floating panels!
 5. `bmo.build_layered_curve_hair(name_prefix, body_obj, scalp_offset_m=0.011, scalp_thickness_m=0.014, primary_locks=[{"points":[...], "radii":[...], "tilts_deg":[...], "width_scale":1.0}], secondary_locks=[...], braid_paths=[{"points":[...], "radius":0.014, "twists":7.0}], collection=col_export)`
    - Builds fitted scalp volume cap + sculpted Bezier curve locks + braids as manifold UV meshes (no rope tubes/spikes).
-6. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)`
-7. Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
+6. `bmo.pose_arm_for_prop_hold(body_obj, side="L", shoulder_pitch_deg=32.0, shoulder_inward_deg=18.0, elbow_bend_deg=72.0)` -> smoothly bends shoulder+elbow forward via `SK_Stylization` and returns updated `elbow_L/wrist_L/hand_L`.
+7. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)`
+8. Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
 """
 
 
@@ -365,6 +366,10 @@ class AutonomousBlenderHarness:
             "}\n"
             "try:\n"
             "    exec(_user_code, _ns)\n"
+            "    if BASE_MESH_MANIFEST and bpy.data.objects.get('SM_BaseBody') is not None:\n"
+            "        _integ = bmo.audit_base_mesh_integrity(scene)\n"
+            "        if not _integ.get('ok'):\n"
+            "            raise RuntimeError('Base mesh integrity check failed: ' + '; '.join(_integ.get('issues') or []))\n"
             "    audit = bt.get_scene_audit(scene)\n"
             "    print('__ORCH_JSON__:' + json.dumps({'ok': True, 'audit': audit}))\n"
             "except Exception as _exc:\n"
@@ -493,13 +498,14 @@ class AutonomousBlenderHarness:
         current_prompt = agent_prompt
 
         for attempt in range(1, max_code_retries + 1):
+            # Always use a fresh isolated session (`session_id=None`) on retries so previous bloated output isn't replayed in KV cache!
             resp = self._invoke_agent(
                 self.model_id,
                 current_prompt,
                 files=attach_files if attempt == 1 else None,
-                session_id=sess_id,
+                session_id=None,
                 timeout_sec=self.stage_timeout_sec,
-                title=f"Blender Specialist ({stage_label})",
+                title=f"Blender Specialist ({stage_label} a{attempt})",
             )
             if resp.get("session_id"):
                 sess_id = resp["session_id"]
@@ -520,7 +526,7 @@ class AutonomousBlenderHarness:
                 raise QuotaBlockedError(q_info)
             if int(resp.get("returncode", 1)) != 0:
                 last_error = f"Agent CLI error rc={resp.get('returncode')}: {resp.get('errors')}"
-                current_prompt = f"Previous call failed ({last_error}). Please return a clean ```python ... ``` script only."
+                current_prompt = f"Previous call failed ({last_error[:600]}). Return ONLY a complete executable ```python ... ``` script using `bt` and `bmo`."
                 continue
 
             code = _extract_python_block(str(resp.get("text") or ""))
@@ -528,7 +534,7 @@ class AutonomousBlenderHarness:
                 last_error = "Agent response did not include a ```python ... ``` code block."
                 current_prompt = (
                     "Your response did not contain a fenced ```python ... ``` block. "
-                    "Return ONLY a complete executable ```python ... ``` script using `bt` and `bpy`."
+                    "Return ONLY a complete executable ```python ... ``` script using `bt`, `bmo`, and `bpy`."
                 )
                 continue
 
@@ -556,10 +562,11 @@ class AutonomousBlenderHarness:
                 }
 
             last_error = str(exec_res.get("traceback") or exec_res.get("error") or "Unknown Blender error")
+            code_ctx = last_code if len(last_code) <= 10000 else (last_code[:6500] + "\n# ...(trimmed)...\n" + last_code[-3200:])
             current_prompt = (
-                f"Your Blender Python script raised an exception:\n```\n{last_error}\n```\n"
-                "Fix the bug cleanly while preserving all geometry quality and return the COMPLETE corrected "
-                "```python ... ``` script (do not call any tools)."
+                f"Previous script raised an error:\n```\n{last_error[-1200:]}\n```\n"
+                f"Script to fix:\n```python\n{code_ctx}\n```\n"
+                "Fix the bug cleanly (never rescale/move SM_BaseBody or drop SM_BaseBody_Eye_L/R, keep all meshes within bounds, never link SM_Studio_* to col_export) and return ONLY the COMPLETE corrected ```python ... ``` script."
             )
 
         return {
@@ -991,10 +998,10 @@ class AutonomousBlenderHarness:
                                 f"You are the Body-Aware Garment, Curve-Hair & Prop Specialist (Stage 3 — {pid}: {pspec.get('title', '')}).",
                                 "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
                                 "RULES FOR BASE MESH MODE:",
-                                "- Preserve `SM_BaseBody` and `SM_BaseBody_Eye_L`/`R` cleanly (do NOT delete them!). Remove/replace only any older garment/hair/prop object you recreate (`bt.remove_object_if_exists`).",
+                                "- Preserve `SM_BaseBody` and `SM_BaseBody_Eye_L`/`R` cleanly at their exact normalized scale/location (`1.65m` tall, facing `-Y`, `min_z=0.0`) — NEVER rescale, rotate, or move `SM_BaseBody` or drop `SM_BaseBody_Eye_L/R`, and NEVER link `SM_Studio_*` objects into `col_export`!",
                                 "- GARMENTS: ALWAYS derive body-conforming clothing directly from `body_obj = bpy.data.objects['SM_BaseBody']` via `bmo.extract_garment_from_body(...)` (tunic bodice + flared skirt, inner cream undershirt collar/hem, belts/straps, trousers/tights, fitted knee cuffs, boot shafts/spats) so ZERO floating oval plates or double sleeves exist!",
-                                "- HAIR: Build scalp-conforming hair + layered Bezier curve locks + interwoven braids via `bmo.build_layered_curve_hair(...)` using exact `head_center`/`neck`/`shoulder` coordinates from Landmarks below (NEVER cone spikes or round tubes!).",
-                                "- HANDS & HELD PROP: Build hero prop (`SM_HeroProp` etc.) and call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)` so thumb + fingers physically wrap its edge!",
+                                "- HAIR: Build scalp-conforming hair + lush wide Bezier curve locks (`width_scale >= 1.2`) + interwoven braids via `bmo.build_layered_curve_hair(...)` sweeping downward behind shoulders using exact Landmarks below (`z <= head_top_z`, ZERO upward vertical spikes!).",
+                                "- HANDS & HELD PROP: Call `bmo.pose_arm_for_prop_hold(body_obj, side='L')` BEFORE `extract_garment_from_body` sleeves if posing arm, build hero prop (`SM_Prop_RunicSlate`), and call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)` so thumb + fingers physically wrap its edge!",
                                 f"Verified Landmarks:\n{landmarks_summary}",
                                 f"Pass Spec:\n{json.dumps(pspec, indent=2)[:1500]}",
                                 f"Design Spec:\n{spec_compact[:2200]}",
@@ -1154,9 +1161,9 @@ class AutonomousBlenderHarness:
                         "You are the UV, Texture, Stylized PBR Material & Lookdev Specialist Agent (Stage 4).",
                         "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
                         "CRITICAL LOOKDEV STANDARDS:",
-                        "- Preserve existing `UVMap` on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (or unwrap any new `SM_*` meshes lacking UVs; use `bt.project_planar_uv` cleanly on planar front emblems/eyeballs computed from their exact vertex bounds!).",
-                        "- Paint crisp `1024x1024` sRGB procedural textures via `bt.create_painted_image_texture(...)` using `bt.hex_to_srgb('#RRGGBB')` — expressive irises & catchlights on eyeballs, garment trim/embroidery, and glowing runic emblems (`emission_texture` + `emission_strength=6.0..10.0`), packed (`pack=True`).",
-                        "- Create distinct, saturated `MAT_*` stylized PBR materials via `bt.make_pbr_material(name, '#RRGGBB', ...)` (matte cloth `roughness=0.75-0.85`, satin dark leather `roughness=0.38-0.48, coat=0.08`, metallic gold `metallic=0.92, roughness=0.28`, warm subsurface skin `subsurface=0.06, roughness=0.52`, glossy golden hair `roughness=0.36, coat=0.14`, glowing emissive core).",
+                        "- Preserve existing `UVMap` and positions on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (NEVER shrink, move, or drop them, and NEVER link `SM_Studio_*` to `col_export`!). Unwrap any new `SM_*` meshes lacking UVs (`bt.project_planar_uv` on planar front emblems/eyeballs computed from their exact vertex bounds).",
+                        "- Paint crisp `1024x1024` sRGB procedural textures via `bt.create_painted_image_texture(...)` using `bt.hex_to_srgb('#RRGGBB')` — expressive emerald irises & catchlights on `SM_BaseBody_Eye_L`/`R`, garment gold trim/embroidery, and glowing cyan runic emblems on `SM_Prop_*` (`emission_texture` + `emission_strength=7.0`), packed (`pack=True`).",
+                        "- Assign a DISTINCT rich saturated `MAT_*` material via `bt.make_pbr_material(name, '#RRGGBB', ...)` to EVERY mesh in `col_export` (`#1A5BC4` royal-blue tunic, `#EFE6D2` cream undershirt, `#E3AE3D` golden blonde hair, `#F0C4A0` warm skin, `#2B2A30` dark leggings, `#523520` leather boots/belt, `#D8A62E` metallic gold trim `metallic=0.9`, `#22252A` gunmetal slate with glowing `#2CE6FF` cyan rune) — ZERO meshes left white/untextured!",
                         "- ZERO blotchy cloudy noise on skin/cloth/leather (`noise_bump <= 0.03`). Assign a material to EVERY mesh in `col_export`!",
                         f"Design Spec Palette & Texture Plan:\n{spec_compact[:2400]}",
                         "Live Scene Inventory:\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800],
