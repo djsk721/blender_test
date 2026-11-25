@@ -110,21 +110,22 @@ Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground
 4. `bmo.style_face_features(body_obj, iris_hex="#2EA87A", pupil_hex="#0B1318", sclera_hex="#F7F7F5", brow_hex="#9A7236", lip_hex="#D98B7C", lash_hex="#2A1E1A", eye_scale=1.0, collection=col_export)`
    - Seats stylized emerald anime eyeballs cleanly in orbital sockets + surface-snapped `SM_Eyelashes` & `SM_Eyebrows` + lip tint on `SM_BaseBody` (NEVER create a separate floating `GEO_Mouth_Lips`!).
 5. `bmo.extract_garment_from_body(body_obj, name, z_min=..., z_max=..., x_abs_max=0.18, x_abs_min=None, side=None, y_min=None, y_max=None, surface_offset_m=0.008, thickness_m=0.004, bottom_flare=0.0, top_collar_flare=0.0, add_shrinkwrap=False, subsurf=1, collection=col_export)`
-   - Creates body-conforming garments directly from torso faces (keep tunic bodice `x_abs_max=0.18`, `z_max=neck_z - 0.015`; NEVER extract below `hip_z` for a skirt!).
-6. `bmo.create_flared_skirt_from_waist(body_obj, name="SM_Tunic_Skirt", waist_z=None, hem_z=0.64, flare_radius_add=0.095, collection=col_export)`
-   - Builds a continuous pleated A-line tunic skirt from waist past thighs (ZERO inner-thigh shorts split!).
-7. `bmo.extract_sleeve_from_arm(body_obj, name, side="L", start_frac=0.04, end_frac=0.88, surface_offset_m=0.010, thickness_m=0.004, cuff_flare=0.008, subsurf=1, collection=col_export)`
+   - Creates smooth arm-excluded body-conforming garments directly from torso/leg faces (keep tunic bodice `x_abs_max=0.18`, `z_max=neck_z - 0.015`; NEVER extract below `hip_z` for a skirt!).
+6. `bmo.create_flared_skirt_from_waist(body_obj, name="SM_Tunic_Skirt", waist_z=None, hem_z=0.70, flare_radius_add=0.060, collection=col_export)`
+   - Builds a sleek continuous pleated A-line tunic peplum/skirt from waist past hips (arm-excluded, zero bloat or thigh split!).
+7. `bmo.create_fitted_waist_belt(body_obj, name="SM_Belt", waist_z=None, belt_height=0.052, add_buckle=True, collection=col_export)` -> returns `{"belt": belt_obj, "buckle": buckle_obj}`.
+8. `bmo.extract_sleeve_from_arm(body_obj, name, side="L", start_frac=0.04, end_frac=0.88, surface_offset_m=0.010, thickness_m=0.004, cuff_flare=0.008, subsurf=1, collection=col_export)`
    - Call AFTER `pose_arm_for_prop_hold` so sleeves follow posed/bent arms seamlessly (ZERO floating A-pose tubes!).
-8. `bmo.create_fitted_boots(body_obj, name="SM_Boots", shaft_top_z=0.30, cuff_height=0.068, sole_thickness=0.018, clearance_m=0.017, collection=col_export)`
+9. `bmo.create_fitted_boots(body_obj, name="SM_Boots", shaft_top_z=0.30, cuff_height=0.068, sole_thickness=0.018, clearance_m=0.017, collection=col_export)`
    - Lofts smooth grounded mid-calf boots & fold-over cuffs enveloping feet cleanly (`min_z=0.0`, ZERO toe-crevice or heel poke-through!).
-9. `bmo.extract_hem_trim_from_garment(garment_obj, name, edge="bottom", band_height_m=0.022, surface_offset_m=0.004, thickness_m=0.003, collection=col_export)`
+10. `bmo.extract_hem_trim_from_garment(garment_obj, name, edge="bottom", band_height_m=0.022, surface_offset_m=0.004, thickness_m=0.003, collection=col_export)`
    - Extracts surface-conforming gold trim bands directly from garment top/bottom edges (NEVER floating torus rings!).
-10. `bmo.build_layered_curve_hair(name_prefix, body_obj, scalp_offset_m=0.011, scalp_thickness_m=0.014, auto_crown_braid=True, auto_flowing_back={"length_m": 0.58, "lock_count": 11}, auto_side_locks={"length_m": 0.30}, primary_locks=None, secondary_locks=None, braid_paths=None, collection=col_export)`
-   - Builds fitted scalp cap + bold ear-to-ear wrapped crown braid + layered tapered flowing locks + cheek locks & wispy bangs above eyebrows (NEVER add flat hair-card planes like `SM_Hair_ManeCards`!).
-11. `bmo.pose_arm_for_prop_hold(body_obj, side="L", shoulder_pitch_deg=32.0, shoulder_inward_deg=18.0, elbow_bend_deg=72.0)` -> bends shoulder+elbow forward BEFORE `extract_sleeve_from_arm`.
-12. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)` -> keep ONLY ONE beveled upright `SM_Prop_RunicSlate` facing `-Y`.
-13. SCRIPTING & STUDIO RULES: Keep scripts CONCISE (<180 lines) using `bmo.*` and `bt.make_pbr_material(...)` directly — NEVER write a custom `make_mat()` function or raw BSDF socket loop, NEVER split a script into Part 1 / Part 2, NEVER assign per-polygon multi-materials onto `SM_BaseBody_Eye_L`/`R`, NEVER paint clothing/hair materials onto `SM_BaseBody` torso/legs, and NEVER create custom studio backdrops, floors, lights, collections (`COL_STUDIO_*`), or cameras!
-14. Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
+11. `bmo.build_layered_curve_hair(name_prefix, body_obj, scalp_offset_m=0.011, scalp_thickness_m=0.014, auto_crown_braid=True, auto_flowing_back={"length_m": 0.58, "lock_count": 11}, auto_side_locks={"length_m": 0.30}, primary_locks=None, secondary_locks=None, braid_paths=None, collection=col_export)`
+   - Builds clean ear-free scalp cap + bold ear-to-ear wrapped crown braid + layered tapered flowing locks + cheek locks & wispy bangs above eyebrows (NEVER add flat hair-card planes like `SM_Hair_ManeCards`!).
+12. `bmo.pose_arm_for_prop_hold(body_obj, side="L", shoulder_pitch_deg=32.0, shoulder_inward_deg=18.0, elbow_bend_deg=72.0)` -> IDEMPOTENT via `SK_ArmPose_L` (safe to call once in Pass 1; NEVER delete or collapse `SM_BaseBody` hands!).
+13. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)` -> keep ONLY ONE upright beveled `SM_Prop_RunicSlate` facing `-Y`, created with `bt.create_beveled_panel('SM_Prop_RunicSlate', [(-0.085,-0.065),(0.085,-0.065),(0.085,0.065),(-0.085,0.065)], depth=0.022, bevel_width=0.004, collection=col_export)` (extruded in XZ along Y!).
+14. SCRIPTING, MATERIAL & STUDIO RULES: Keep scripts CONCISE (<180 lines) using `bmo.*` and `bt.make_pbr_material(...)` directly — NEVER write a custom `make_mat()` function, NEVER split a script into Part 1/2, NEVER use `Matrix.to_decomposition()` (use `.decompose()`), NEVER delete/collapse `SM_BaseBody` hands or build primitive `SM_Hand_L/R` replacements, NEVER use raw `primitive_cube_add` for `SM_Prop_RunicSlate`, NEVER assign per-polygon multi-material splits onto `SM_Tunic_Bodice`, `SM_Tunic_Skirt`, `SM_BaseBody`, or `SM_BaseBody_Eye_L`/`R`, NEVER link `SM_Studio_*` to `col_export`, and NEVER create custom studio backdrops, floors, lights, or cameras!
+15. RIGGING & ANIMATION: `bt.create_cycle_animation(arm_obj, {1: {"L_leg_upper": (34, 0, 0), "L_leg_lower": (-22, 0, 0), "R_leg_upper": (-30, 0, 0), ...}, 7: {...}, 13: {...}, 24: {...}}, action_name="ACT_RunCycle")` — pass canonical `{frame: {bone: (rx_deg, ry_deg, rz_deg)}}` in DEGREES (NOT `math.radians`!). Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
 """
 
 
@@ -1033,12 +1034,12 @@ class AutonomousBlenderHarness:
                             "title": "Body-Conforming Tunic, A-Line Skirt, Sleeves, Belt, Leggings & Cuffed Boots",
                             "skills": [primary_disc_skill, "sculpting"],
                             "focus": (
-                                "PASS 2 SCOPE ONLY (keep script <180 lines; NEVER write a custom make_mat() helper — use `bt.make_pbr_material` directly!): "
+                                "PASS 2 SCOPE ONLY (keep script <180 lines; NEVER write a custom make_mat() helper or use Matrix.to_decomposition() — use .decompose()!; Pass 1 already posed the left arm, so do NOT collapse or replace SM_BaseBody hands!): "
                                 "1) Royal-blue tunic bodice `bmo.extract_garment_from_body(body_obj, 'SM_Tunic_Bodice', z_min=waist_z-0.02, z_max=neck_z-0.015, x_abs_max=0.18, collection=col_export)` + cream undershirt collar; "
-                                "2) Continuous pleated A-line skirt `bmo.create_flared_skirt_from_waist(body_obj, 'SM_Tunic_Skirt', hem_z=0.64, flare_radius_add=0.095, collection=col_export)`; "
+                                "2) Sleek pleated A-line tunic peplum skirt `bmo.create_flared_skirt_from_waist(body_obj, 'SM_Tunic_Skirt', hem_z=0.70, flare_radius_add=0.060, collection=col_export)`; "
                                 "3) Gold collar & hem trim `bmo.extract_hem_trim_from_garment(...)`; "
                                 "4) Posed L/R arm sleeves & gloves via `bmo.extract_sleeve_from_arm(body_obj, ..., side='L'/'R')` (`0.02..0.45` blue, `0.42..0.86` cream, `0.84..0.98` dark fingerless gloves); "
-                                "5) Leather belt + gold buckle + left-hip pouch + charcoal leggings + `bmo.create_fitted_boots(body_obj, 'SM_Boots', shaft_top_z=0.30, collection=col_export)`."
+                                "5) Fitted leather waist belt + buckle `bmo.create_fitted_waist_belt(body_obj, 'SM_Belt', add_buckle=True, collection=col_export)` + beveled hip pouch (`bt.create_beveled_panel`) + charcoal leggings `SM_Leggings_L`/`R` (`extract_garment_from_body(..., z_min=ankle_z+0.02, z_max=hip_z+0.075, side='L'/'R')`) + `bmo.create_fitted_boots(body_obj, 'SM_Boots', shaft_top_z=0.30, collection=col_export)`."
                             ),
                         },
                         {
@@ -1046,10 +1047,10 @@ class AutonomousBlenderHarness:
                             "title": "Layered Curve Hair, Crown Braid, Wispy Bangs & Held Runic Slate Prop",
                             "skills": ["hair-groom", "sculpting"],
                             "focus": (
-                                "PASS 3 SCOPE ONLY (keep script <120 lines; NEVER build planar SM_Hair_ManeCards or write custom make_mat()): "
+                                "PASS 3 SCOPE ONLY (keep script <120 lines; NEVER build planar SM_Hair_ManeCards, NEVER use primitive_cube_add for the prop, and NEVER write custom make_mat()): "
                                 "1) Call `bmo.build_layered_curve_hair('SM_Hair', body_obj, auto_crown_braid=True, auto_flowing_back={'length_m': 0.58, 'lock_count': 11}, auto_side_locks={'length_m': 0.30}, collection=col_export)` and assign golden blonde PBR (`bt.make_pbr_material`); "
-                                "2) Build ONLY ONE beveled upright hero prop `SM_Prop_RunicSlate` facing `-Y` using `bt.create_beveled_panel(...)` + `bt.smart_uv_unwrap(...)`; "
-                                "3) Call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)` so fingers wrap its edge cleanly."
+                                "2) Build ONLY ONE upright beveled hero prop `SM_Prop_RunicSlate` facing `-Y` via `bt.create_beveled_panel('SM_Prop_RunicSlate', [(-0.085,-0.065),(0.085,-0.065),(0.085,0.065),(-0.085,0.065)], depth=0.022, bevel_width=0.004, collection=col_export)` + `bt.smart_uv_unwrap(prop_obj)`; "
+                                "3) Call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)` so the articulated Base Mesh fingers wrap its edge cleanly in front of the chest (never buried inside head/torso!)."
                             ),
                         },
                     ]
@@ -1190,6 +1191,7 @@ class AutonomousBlenderHarness:
                             "CRITICAL FIX RULES:",
                             "- Execute REAL 3D mesh/sculpt/topology fixes ONLY on the defective components listed below AND any GEOMETRY_ANOMALIES_TO_FIX.",
                             "- ALWAYS delete old defective meshes (`bt.remove_object_if_exists(...)`) BEFORE building replacements — NEVER stack duplicate eyelids, duplicate sleeves, or overlapping patches!",
+                            "- NEVER build primitive cylinder/cube `SM_Hand_L/R` replacements or raw-cube `SM_Prop_RunicSlate`, and NEVER assign per-polygon multi-material splits onto `SM_Tunic_Bodice`/`SM_Tunic_Skirt`/`SM_BaseBody`!",
                             "- Eliminate ANY double sleeves, elbow socket seams, oversized forehead/excessive downward head pitch, floating fragments, needle spikes, coplanar Z-fighting overlays, eye-occluding hair cards, studio walls/lights, or floating feet (ensure `min_z ≈ 0.0`).",
                             f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
                             "Independent Reviewer Defects:\n" + json.dumps(rev.get("defects", []), indent=2)[:2800],
@@ -1271,7 +1273,7 @@ class AutonomousBlenderHarness:
                         "You are the UV, Texture, Stylized PBR Material & Lookdev Specialist Agent (Stage 4).",
                         "Do NOT call any tools. Return ONLY ONE complete executable ```python ... ``` script (<180 lines, NEVER write a custom make_mat() or split into Part 1/2!).",
                         "CRITICAL LOOKDEV STANDARDS:",
-                        "- Preserve existing `UVMap` and positions on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (NEVER shrink/move/drop them, NEVER assign per-polygon multi-materials onto `SM_BaseBody_Eye_L/R`, NEVER paint clothing/hair materials onto `SM_BaseBody` torso/legs, NEVER link `SM_Studio_*` to `col_export`, and NEVER create custom studio lights, backdrops, floors, or cameras!). Unwrap any new `SM_*` meshes lacking UVs (`bt.project_planar_uv` on planar front emblems computed from exact vertex bounds).",
+                        "- Preserve existing `UVMap` and positions on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (NEVER shrink/move/drop them, NEVER create primitive replacement `SM_Hand_L/R` or raw-cube `SM_Prop_RunicSlate`, NEVER assign per-polygon multi-material splits onto `SM_BaseBody_Eye_L/R`, `SM_BaseBody`, `SM_Tunic_Bodice`, or `SM_Tunic_Skirt`, NEVER link `SM_Studio_*` to `col_export`, and NEVER create custom studio lights, backdrops, floors, or cameras!). Unwrap any new `SM_*` meshes lacking UVs (`bt.project_planar_uv` on planar front emblems computed from exact vertex bounds).",
                         "- Call `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` so eyes/brows/lashes stay bright without checkerboard artifacts.",
                         "- Build rich deep multi-layer PBR shaders via `bt.make_pbr_material(..., ao_darken=0.32, ao_distance=0.14)` (`#F0C4A0` matte stylized skin with `roughness=0.58, specular=0.35, subsurface=0.06` — NO glossy plastic sheen!, `#1A5BC4` royal blue tunic, `#E3A93C` golden blonde hair roughness=0.44, `#EFE6D2` cream undershirt, `#2A2A32` charcoal leggings, `#5A3820` brown leather boots/belt, `#D8A62E` metallic gold trim metallic=0.9, dark gunmetal slate with `1024x1024` `bt.create_painted_image_texture` `#30E8FF` cyan rune/lens `emission_texture` & `emission_strength=6.5`, packed). Assign a `MAT_*` material to EVERY mesh in `col_export` — ZERO untextured parts!",
                         f"Design Spec Palette & Texture Plan:\n{spec_compact[:2400]}",
@@ -1351,6 +1353,7 @@ class AutonomousBlenderHarness:
                             f"You are the Senior Lookdev, Texture & Form Polish Agent (Stage 4 Fix Pass {fix_idx + 1}/{self.max_stage_corrections}).",
                             "Do NOT call any tools. Compare the attached full-color contact sheets directly against the reference image / design specification.",
                             "Fix ALL CRITICAL and MAJOR defects reported below — refine 3D geometry/hair/eyes/garments/accessories AND painted textures/UVs/PBR materials!",
+                            "NEVER delete/collapse SM_BaseBody hands, NEVER build primitive SM_Hand_L/R or raw-cube SM_Prop_RunicSlate, and NEVER paint multi-material per-polygon cutouts onto SM_Tunic_Bodice, SM_Tunic_Skirt, or SM_BaseBody!",
                             "Preserve all good unaffected objects in `col_export`.",
                             f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
                             "Independent Reviewer Defects:\n" + json.dumps(rev.get("defects", []), indent=2)[:2800],
@@ -1445,7 +1448,7 @@ class AutonomousBlenderHarness:
                         "You are the Rigging & Animation Specialist Agent (Stage 5).",
                         "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
                         "Build ONE clean hierarchical armature (`ARM_Asset`) matched to the EXACT bounding/landmark coordinates of the current meshes in `col_export` using `bt.create_rig_and_bind(scene, bone_specs, armature_name='ARM_Asset')` (remove any older duplicate armatures first!).",
-                        "If animation is required, create a clean looped animation cycle (`frame_start=1, frame_end=24`, start == end) via `bt.create_cycle_animation(arm_obj, keyframe_specs, action_name='ACT_RunCycle')`.",
+                        "If animation is required, create a clean looped animation cycle (`frame_start=1, frame_end=24`, start == end) via canonical `bt.create_cycle_animation(arm_obj, {1: {'L_leg_upper': (34, 0, 0), 'L_leg_lower': (-22, 0, 0), 'R_leg_upper': (-30, 0, 0), 'R_leg_lower': (-38, 0, 0), 'R_arm_upper': (28, 0, 0), ...}, 7: {...}, 13: {...}, 24: {...}}, action_name='ACT_RunCycle')` — use DEGREES (25..45 deg noticeable leg/knee/arm swing so frames 1, 7, and 13 show clearly distinct run poses; NEVER wrap degree values in `math.radians`!).",
                         f"Requires Animation: {need_anim} | Animation Mode: {animation_mode}",
                         f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
                         f"Complete Live Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800]}",

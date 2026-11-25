@@ -263,6 +263,114 @@ def _find_head_shoulder_splits(verts: list[Any], z_min: float, h: float) -> dict
     }
 
 
+def _pt_seg_dist(p: Any, a: Any, b: Any) -> float:
+    ab = b - a
+    l2 = ab.length_squared
+    if l2 < 1e-8:
+        return (p - a).length
+    t = max(0.0, min(1.0, (p - a).dot(ab) / l2))
+    return (p - (a + ab * t)).length
+
+
+def _get_arm_vertex_indices(obj: Any) -> dict[str, Any]:
+    """Identify true arm, elbow, wrist, and hand vertex indices cleanly in unposed space."""
+    _require_blender()
+    mesh = obj.data
+    saved_vals: list[tuple[Any, float]] = []
+    if mesh.shape_keys:
+        for kb in mesh.shape_keys.key_blocks:
+            if kb.name in ("SK_ArmPose_L", "SK_ArmPose_R", "SK_HandPose_L", "SK_HandPose_R"):
+                saved_vals.append((kb, kb.value))
+                kb.value = 0.0
+        if saved_vals:
+            mesh.update()
+    try:
+        verts_pre, _ = _eval_mesh_world_verts(obj)
+    finally:
+        if saved_vals:
+            for kb, val in saved_vals:
+                kb.value = val
+            mesh.update()
+
+    if not verts_pre:
+        empty_v = Vector((0.0, 0.0, 0.0))
+        return {
+            "arm_L": set(), "arm_R": set(), "hand_L": set(), "hand_R": set(),
+            "elbow_L": set(), "elbow_R": set(), "wrist_L": set(), "wrist_R": set(),
+            "sh_L": empty_v, "sh_R": empty_v, "el_L": empty_v, "el_R": empty_v,
+            "wr_L": empty_v, "wr_R": empty_v,
+        }
+
+    zs = [v.z for v in verts_pre]
+    z_min, z_max = min(zs), max(zs)
+    h = max(z_max - z_min, 1e-4)
+    splits = _find_head_shoulder_splits(verts_pre, z_min, h)
+    neck_z = splits["neck_z"]
+    shoulder_z = splits["shoulder_z"]
+    waist_z = splits["waist_z"]
+    hip_z = splits["hip_z"]
+
+    torso_pts = [v for v in verts_pre if waist_z <= v.z <= neck_z]
+    max_arm_x = max((abs(v.x) for v in torso_pts), default=0.35 * h)
+    arm_threshold_x = min(0.14 * h, 0.42 * max_arm_x)
+    outer_arm_pts = [v for v in verts_pre if abs(v.x) > arm_threshold_x and hip_z * 0.7 <= v.z <= neck_z]
+
+    def _avg(pts: list[Any], fb: tuple[float, float, float]) -> Any:
+        if not pts:
+            return Vector(fb)
+        return sum(pts, Vector((0.0, 0.0, 0.0))) / len(pts)
+
+    sh_l = _avg([v for v in verts_pre if 0.08 * h <= v.x <= 0.14 * h and abs(v.z - shoulder_z) <= 0.04 * h], (0.11 * h, 0.0, shoulder_z))
+    sh_r = _avg([v for v in verts_pre if -0.14 * h <= v.x <= -0.08 * h and abs(v.z - shoulder_z) <= 0.04 * h], (-0.11 * h, 0.0, shoulder_z))
+
+    arm_l_pts = sorted([v for v in outer_arm_pts if v.x > 0], key=lambda p: p.x)
+    arm_r_pts = sorted([v for v in outer_arm_pts if v.x < 0], key=lambda p: -p.x)
+    el_l = _avg(arm_l_pts[int(len(arm_l_pts) * 0.35) : int(len(arm_l_pts) * 0.52)] if len(arm_l_pts) > 8 else [sh_l], (sh_l.x + 0.14, 0.0, waist_z + 0.05))
+    el_r = _avg(arm_r_pts[int(len(arm_r_pts) * 0.35) : int(len(arm_r_pts) * 0.52)] if len(arm_r_pts) > 8 else [sh_r], (sh_r.x - 0.14, 0.0, waist_z + 0.05))
+    wr_l = _avg(arm_l_pts[int(len(arm_l_pts) * 0.72) : int(len(arm_l_pts) * 0.85)] if len(arm_l_pts) > 8 else [el_l], (max_arm_x * 0.78, 0.0, hip_z + 0.07))
+    wr_r = _avg(arm_r_pts[int(len(arm_r_pts) * 0.72) : int(len(arm_r_pts) * 0.85)] if len(arm_r_pts) > 8 else [el_r], (-max_arm_x * 0.78, 0.0, hip_z + 0.07))
+    hd_l = _avg(arm_l_pts[-max(1, len(arm_l_pts) // 5) :] if arm_l_pts else [wr_l], (max_arm_x * 0.92, 0.0, hip_z))
+    hd_r = _avg(arm_r_pts[-max(1, len(arm_r_pts) // 5) :] if arm_r_pts else [wr_r], (-max_arm_x * 0.92, 0.0, hip_z))
+
+    out: dict[str, Any] = {
+        "sh_L": sh_l, "sh_R": sh_r, "el_L": el_l, "el_R": el_r,
+        "wr_L": wr_l, "wr_R": wr_r,
+    }
+    for s_tag, side_sign, sh_p, el_p, wr_p, hd_p in (
+        ("L", 1.0, sh_l, el_l, wr_l, hd_l),
+        ("R", -1.0, sh_r, el_r, wr_r, hd_r),
+    ):
+        arm_set: set[int] = set()
+        hand_set: set[int] = set()
+        elbow_set: set[int] = set()
+        wrist_set: set[int] = set()
+        sh_x_cut = max(0.082 * h, abs(sh_p.x) - 0.022)
+        hand_dir = hd_p - wr_p
+        if hand_dir.length < 1e-4:
+            hand_dir = (wr_p - el_p)
+        hand_dir = hand_dir.normalized() if hand_dir.length > 1e-4 else Vector((side_sign, 0.0, -0.5)).normalized()
+        tip_p = hd_p + hand_dir * 0.08
+
+        for idx, vp in enumerate(verts_pre):
+            if vp.x * side_sign < sh_x_cut or vp.z > neck_z + 0.02 or vp.z < hip_z * 0.68:
+                continue
+            d_up = _pt_seg_dist(vp, sh_p, el_p)
+            d_lo = _pt_seg_dist(vp, el_p, tip_p)
+            if min(d_up, d_lo) <= 0.115:
+                arm_set.add(idx)
+                if (vp - wr_p).dot(hand_dir) >= -0.015 and (vp - hd_p).length <= 0.12:
+                    hand_set.add(idx)
+                if (vp - el_p).length <= 0.048:
+                    elbow_set.add(idx)
+                if (vp - wr_p).length <= 0.036:
+                    wrist_set.add(idx)
+        out[f"arm_{s_tag}"] = arm_set
+        out[f"hand_{s_tag}"] = hand_set
+        out[f"elbow_{s_tag}"] = elbow_set
+        out[f"wrist_{s_tag}"] = wrist_set
+    return out
+
+
 def inspect_anatomical_regions(obj: Any, *, assign_vertex_groups: bool = True) -> dict[str, Any]:
     """Inspect existing vertex groups/shape keys and map verified anatomical landmarks & ANAT_* groups."""
     _require_blender()
@@ -380,11 +488,34 @@ def inspect_anatomical_regions(obj: Any, *, assign_vertex_groups: bool = True) -
     ear_pts_l = [v for v in head_pts if v.x >= 0.43 * head_x_span and neck_z + 0.35 * head_h <= v.z <= neck_z + 0.68 * head_h]
     ear_pts_r = [v for v in head_pts if v.x <= -0.43 * head_x_span and neck_z + 0.35 * head_h <= v.z <= neck_z + 0.68 * head_h]
 
-    # Hand/finger landmarks (outermost lateral + low forearm points along +/-X arm)
+    # Hand/finger landmarks (use tracked vertices directly when SK_ArmPose_* is active so inward bends read accurately)
     arm_l_pts = sorted([v for v in outer_arm_pts if v.x > 0], key=lambda p: p.x)
     arm_r_pts = sorted([v for v in outer_arm_pts if v.x < 0], key=lambda p: -p.x)
     hand_l_pts = arm_l_pts[-max(1, len(arm_l_pts) // 5):] if arm_l_pts else []
     hand_r_pts = arm_r_pts[-max(1, len(arm_r_pts) // 5):] if arm_r_pts else []
+    elbow_l_pts = arm_l_pts[int(len(arm_l_pts) * 0.35) : int(len(arm_l_pts) * 0.52)] if len(arm_l_pts) > 8 else []
+    elbow_r_pts = arm_r_pts[int(len(arm_r_pts) * 0.35) : int(len(arm_r_pts) * 0.52)] if len(arm_r_pts) > 8 else []
+    wrist_l_pts = arm_l_pts[int(len(arm_l_pts) * 0.72) : int(len(arm_l_pts) * 0.85)] if len(arm_l_pts) > 8 else hand_l_pts
+    wrist_r_pts = arm_r_pts[int(len(arm_r_pts) * 0.72) : int(len(arm_r_pts) * 0.85)] if len(arm_r_pts) > 8 else hand_r_pts
+
+    if mesh.shape_keys and any(
+        (kb := mesh.shape_keys.key_blocks.get(k)) is not None and abs(kb.value) > 1e-3
+        for k in ("SK_ArmPose_L", "SK_ArmPose_R", "SK_HandPose_L", "SK_HandPose_R")
+    ):
+        arm_idx = _get_arm_vertex_indices(obj)
+        n_verts = len(verts)
+        if arm_idx["hand_L"]:
+            hand_l_pts = [verts[i] for i in arm_idx["hand_L"] if i < n_verts]
+        if arm_idx["hand_R"]:
+            hand_r_pts = [verts[i] for i in arm_idx["hand_R"] if i < n_verts]
+        if arm_idx["elbow_L"]:
+            elbow_l_pts = [verts[i] for i in arm_idx["elbow_L"] if i < n_verts]
+        if arm_idx["elbow_R"]:
+            elbow_r_pts = [verts[i] for i in arm_idx["elbow_R"] if i < n_verts]
+        if arm_idx["wrist_L"]:
+            wrist_l_pts = [verts[i] for i in arm_idx["wrist_L"] if i < n_verts]
+        if arm_idx["wrist_R"]:
+            wrist_r_pts = [verts[i] for i in arm_idx["wrist_R"] if i < n_verts]
 
     sh_l_pts = [v for v in verts if 0.08 * h <= v.x <= 0.14 * h and abs(v.z - splits["shoulder_z"]) <= 0.04 * h]
     sh_r_pts = [v for v in verts if -0.14 * h <= v.x <= -0.08 * h and abs(v.z - splits["shoulder_z"]) <= 0.04 * h]
@@ -417,10 +548,10 @@ def inspect_anatomical_regions(obj: Any, *, assign_vertex_groups: bool = True) -
         "hips": [0.0, 0.0, splits["hip_z"]],
         "hand_L": _mean_pt(hand_l_pts, (max_arm_x * 0.92, 0.0, splits["hip_z"])),
         "hand_R": _mean_pt(hand_r_pts, (-max_arm_x * 0.92, 0.0, splits["hip_z"])),
-        "wrist_L": _mean_pt(arm_l_pts[int(len(arm_l_pts) * 0.72) : int(len(arm_l_pts) * 0.85)] if len(arm_l_pts) > 8 else hand_l_pts, (max_arm_x * 0.78, 0.0, splits["hip_z"] + 0.07)),
-        "wrist_R": _mean_pt(arm_r_pts[int(len(arm_r_pts) * 0.72) : int(len(arm_r_pts) * 0.85)] if len(arm_r_pts) > 8 else hand_r_pts, (-max_arm_x * 0.78, 0.0, splits["hip_z"] + 0.07)),
-        "elbow_L": _mean_pt(arm_l_pts[int(len(arm_l_pts) * 0.35) : int(len(arm_l_pts) * 0.52)] if len(arm_l_pts) > 8 else sh_l_pts, (shoulder_half_w + 0.14, 0.0, splits["waist_z"] + 0.05)),
-        "elbow_R": _mean_pt(arm_r_pts[int(len(arm_r_pts) * 0.35) : int(len(arm_r_pts) * 0.52)] if len(arm_r_pts) > 8 else sh_r_pts, (-shoulder_half_w - 0.14, 0.0, splits["waist_z"] + 0.05)),
+        "wrist_L": _mean_pt(wrist_l_pts, (max_arm_x * 0.78, 0.0, splits["hip_z"] + 0.07)),
+        "wrist_R": _mean_pt(wrist_r_pts, (-max_arm_x * 0.78, 0.0, splits["hip_z"] + 0.07)),
+        "elbow_L": _mean_pt(elbow_l_pts or sh_l_pts, (shoulder_half_w + 0.14, 0.0, splits["waist_z"] + 0.05)),
+        "elbow_R": _mean_pt(elbow_r_pts or sh_r_pts, (-shoulder_half_w - 0.14, 0.0, splits["waist_z"] + 0.05)),
         "knee_L": _mean_pt([v for v in verts if v.x > 0.01 and abs(v.z - splits["knee_z"]) <= 0.02 * h], (0.065 * h, 0.0, splits["knee_z"])),
         "knee_R": _mean_pt([v for v in verts if v.x < -0.01 and abs(v.z - splits["knee_z"]) <= 0.02 * h], (-0.065 * h, 0.0, splits["knee_z"])),
         "ankle_L": _mean_pt([v for v in verts if v.x > 0.01 and abs(v.z - splits["ankle_z"]) <= 0.02 * h], (0.065 * h, 0.0, splits["ankle_z"])),
@@ -680,6 +811,7 @@ def extract_garment_from_body(
     bottom_flare: float = 0.0,
     top_collar_flare: float = 0.0,
     add_shrinkwrap: bool = False,
+    flatten_z_boundaries: bool = True,
     subsurf: int = 1,
     collection: Any | None = None,
 ) -> Any:
@@ -690,11 +822,20 @@ def extract_garment_from_body(
 
     side_u = side.upper() if side else None
     verts_w, polys = _eval_mesh_world_verts(body_obj)
+    arm_info = _get_arm_vertex_indices(body_obj)
+    arm_all = arm_info["arm_L"] | arm_info["arm_R"]
+    torso_ys = [verts_w[i].y for i in range(len(verts_w)) if i not in arm_all and z_min <= verts_w[i].z <= z_max]
+    torso_cy = (sum(torso_ys) / len(torso_ys)) if torso_ys else 0.0
+
     selected_poly_indices: set[int] = set()
     used_vert_indices: set[int] = set()
     for pidx, p in enumerate(polys):
         c = p["center"]
         if not (z_min <= c.z <= z_max):
+            continue
+        if any(vi in arm_all for vi in p["verts"]):
+            continue
+        if side_u is None and y_min is None and y_max is None and abs(c.y - torso_cy) > 0.17:
             continue
         if x_abs_max is not None and abs(c.x) > x_abs_max:
             continue
@@ -753,14 +894,21 @@ def extract_garment_from_body(
         except ValueError:
             pass
 
-    # Clean loose verts & smooth interior vertices slightly so extracted shells have no jagged folds
+    # Clean loose verts & smooth boundary + interior vertices so extracted shells have smooth seamlines
     for v in list(bm.verts):
         if not v.link_faces:
             bm.verts.remove(v)
-    interior_verts = [v for v in bm.verts if not v.is_boundary]
-    if interior_verts:
-        for _ in range(2):
-            bmesh.ops.smooth_vert(bm, verts=interior_verts, factor=0.22, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    if flatten_z_boundaries:
+        for v in bm.verts:
+            if v.is_boundary:
+                if abs(v.co.z - z_max) < 0.025:
+                    v.co.z = v.co.z * 0.45 + float(z_max) * 0.55
+                elif abs(v.co.z - z_min) < 0.025:
+                    v.co.z = v.co.z * 0.45 + float(z_min) * 0.55
+    all_bm_verts = list(bm.verts)
+    if all_bm_verts:
+        for _ in range(4):
+            bmesh.ops.smooth_vert(bm, verts=all_bm_verts, factor=0.22, use_axis_x=True, use_axis_y=True, use_axis_z=True)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 
     obj = bt._finalize_bmesh_object(name, bm, collection=col, smooth=True, subsurf=0)
@@ -1092,31 +1240,13 @@ def style_face_features(
     bt.smart_uv_unwrap(lash_joined)
     bt.smart_uv_unwrap(brow_joined)
 
-    # Paint soft rose lip tint directly onto SM_BaseBody lip faces (slot 1), keeping slot 0 as matte stylized skin
-    lips_c = Vector(lm["lips"])
-    chin_z = float(lm["chin"][2])
-    mat_lip = bt.make_pbr_material("MAT_Lips_Stylized", lip_hex, roughness=0.44, specular=0.35, subsurface=0.05)
+    # Keep SM_BaseBody uniformly single-material matte skin (never assign jagged low-res polygon patches onto lip/torso quads!)
     if len(body_obj.data.materials) == 0:
         body_obj.data.materials.append(bt.make_pbr_material("MAT_Skin_Base", "#F0C4A0", roughness=0.58, specular=0.35, subsurface=0.06))
-    lip_slot_idx = None
-    for s_idx, m in enumerate(body_obj.data.materials):
-        if m is not None and m.name == mat_lip.name:
-            lip_slot_idx = s_idx
-            break
-    if lip_slot_idx is None:
-        body_obj.data.materials.append(mat_lip)
-        lip_slot_idx = len(body_obj.data.materials) - 1
-    lip_faces = 0
-    mw = body_obj.matrix_world
     for poly in body_obj.data.polygons:
-        wc = mw @ poly.center
-        if (
-            abs(wc.x) <= 0.022
-            and max(chin_z + 0.015, lips_c.z - 0.011) <= wc.z <= lips_c.z + 0.011
-            and wc.y <= lips_c.y + 0.020
-        ):
-            poly.material_index = lip_slot_idx
-            lip_faces += 1
+        poly.material_index = 0
+    while len(body_obj.data.materials) > 1:
+        body_obj.data.materials.pop()
     body_obj.data.update()
 
     return {
@@ -1124,7 +1254,7 @@ def style_face_features(
         "eyes_seated": seated_eyes,
         "eyelashes": lash_joined.name,
         "eyebrows": brow_joined.name,
-        "lip_faces_tinted": lip_faces,
+        "lip_faces_tinted": 0,
     }
 
 
@@ -1239,14 +1369,14 @@ def create_flared_skirt_from_waist(
     *,
     waist_z: float | None = None,
     hem_z: float = 0.64,
-    top_clearance: float = 0.012,
+    top_clearance: float = 0.008,
     flare_radius_add: float = 0.095,
-    pleat_count: int = 8,
+    pleat_count: int = 10,
     pleat_amp: float = 0.008,
     thickness_m: float = 0.004,
     collection: Any | None = None,
 ) -> Any:
-    """Loft a single continuous body-conforming A-line pleated tunic skirt from waist down past hips (zero thigh split!)."""
+    """Loft a single continuous body-conforming A-line pleated tunic skirt from waist down past hips (excluding arms!)."""
     _require_blender()
     if body_obj is None or body_obj.type != "MESH" or body_obj.data is None:
         raise ValueError("Expected MESH body_obj")
@@ -1254,6 +1384,8 @@ def create_flared_skirt_from_waist(
     bt.remove_object_if_exists(name)
 
     verts_w, _ = _eval_mesh_world_verts(body_obj)
+    arm_info = _get_arm_vertex_indices(body_obj)
+    arm_all = arm_info["arm_L"] | arm_info["arm_R"]
     info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
     lm = info["landmarks"]
     wz = float(waist_z if waist_z is not None else lm["waist"][2])
@@ -1261,10 +1393,24 @@ def create_flared_skirt_from_waist(
     hz = min(hz, wz - 0.05)
     hem_z_val = min(float(hem_z), hz - 0.04)
 
+    torso_band_all = [
+        verts_w[vi]
+        for vi in range(len(verts_w))
+        if vi not in arm_all and abs(verts_w[vi].z - wz) <= 0.05 and abs(verts_w[vi].x) <= 0.20
+    ]
+    torso_cy = (sum(v.y for v in torso_band_all) / len(torso_band_all)) if torso_band_all else 0.0
+
     def _torso_ring(z_target: float, fb_rx: float, fb_ry: float) -> tuple[float, float, float, float]:
-        band = [v for v in verts_w if abs(v.z - z_target) <= 0.035 and abs(v.x) <= 0.22]
+        band = [
+            verts_w[vi]
+            for vi in range(len(verts_w))
+            if vi not in arm_all
+            and abs(verts_w[vi].z - z_target) <= 0.035
+            and abs(verts_w[vi].x) <= 0.22
+            and abs(verts_w[vi].y - torso_cy) <= 0.16
+        ]
         if not band:
-            return 0.0, 0.0, fb_rx, fb_ry
+            return 0.0, torso_cy, fb_rx, fb_ry
         xs = [v.x for v in band]
         ys = [v.y for v in band]
         return (
@@ -1278,27 +1424,36 @@ def create_flared_skirt_from_waist(
     hcx, hcy, hrx, hry = _torso_ring(hz, 0.145, 0.105)
     tcx, tcy, trx, try_ = _torso_ring(hem_z_val, 0.140, 0.095)
 
-    base_rx = max(wrx + top_clearance, hrx + 0.015)
-    base_ry = max(wry + top_clearance, hry + 0.015)
-    hem_rx = max(base_rx, trx + 0.025, hrx) + float(flare_radius_add)
-    hem_ry = max(base_ry, try_ + 0.025, hry) + float(flare_radius_add) * 0.85
+    wcx = max(-0.03, min(0.03, wcx))
+    hcx = max(-0.03, min(0.03, hcx))
+    wrx = max(0.085, min(0.155, wrx))
+    wry = max(0.065, min(0.120, wry))
+    hrx = max(0.110, min(0.190, hrx))
+    hry = max(0.080, min(0.145, hry))
+    trx = min(0.190, trx)
+    try_ = min(0.145, try_)
+
+    top_rx = wrx + top_clearance
+    top_ry = wry + top_clearance
+    hem_rx = max(top_rx + 0.035, hrx) + float(flare_radius_add)
+    hem_ry = max(top_ry + 0.025, hry) + float(flare_radius_add) * 0.85
 
     segments = 32
     rings: list[list[tuple[float, float, float]]] = []
-    n_rings = 5
+    n_rings = 7
     z_top = wz + 0.012
     for r_idx in range(n_rings):
-        t = r_idx / (n_rings - 1)  # 0 at waist -> 1 at hem
+        t = r_idx / (n_rings - 1)  # 0 at snug waist -> 1 at flared hem
         cz = z_top * (1.0 - t) + hem_z_val * t
-        # Smooth A-line expansion clearing hips cleanly
         flare_t = t ** 1.15
         cx = wcx * (1.0 - t) + hcx * t
         cy = wcy * (1.0 - t) + hcy * t
-        rx = (wrx + top_clearance) * (1.0 - flare_t) + hem_rx * flare_t
-        ry = (wry + top_clearance) * (1.0 - flare_t) + hem_ry * flare_t
-        if 0 < r_idx < n_rings - 1:
-            rx = max(rx, hrx + 0.018 + 0.02 * t)
-            ry = max(ry, hry + 0.018 + 0.02 * t)
+        rx = top_rx * (1.0 - flare_t) + hem_rx * flare_t
+        ry = top_ry * (1.0 - flare_t) + hem_ry * flare_t
+        if r_idx >= 2 and r_idx < n_rings - 1:
+            hip_w = math.sin(math.pi * t)
+            rx = max(rx, hrx + 0.018 * hip_w)
+            ry = max(ry, hry + 0.016 * hip_w)
         ring: list[tuple[float, float, float]] = []
         for s_idx in range(segments):
             ang = (2.0 * math.pi * s_idx) / segments
@@ -1322,6 +1477,100 @@ def create_flared_skirt_from_waist(
     bt.add_modifiers(obj, solidify=thickness_m, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
     bt.smart_uv_unwrap(obj)
     return obj
+
+
+def create_fitted_waist_belt(
+    body_obj: Any,
+    name: str = "SM_Belt",
+    *,
+    waist_z: float | None = None,
+    belt_height: float = 0.052,
+    clearance_m: float = 0.013,
+    thickness_m: float = 0.007,
+    add_buckle: bool = True,
+    collection: Any | None = None,
+) -> dict[str, Any]:
+    """Loft a smooth arm-excluded body-hugging waist belt with optional front beveled buckle."""
+    _require_blender()
+    if body_obj is None or body_obj.type != "MESH" or body_obj.data is None:
+        raise ValueError("Expected MESH body_obj")
+    col = collection or (body_obj.users_collection[0] if body_obj.users_collection else None)
+    bt.remove_object_if_exists(name)
+    bt.remove_object_if_exists(f"{name}_Buckle")
+
+    verts_w, _ = _eval_mesh_world_verts(body_obj)
+    arm_info = _get_arm_vertex_indices(body_obj)
+    arm_all = arm_info["arm_L"] | arm_info["arm_R"]
+    info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
+    wz = float(waist_z if waist_z is not None else info["landmarks"]["waist"][2])
+
+    waist_pts = [
+        verts_w[vi]
+        for vi in range(len(verts_w))
+        if vi not in arm_all and abs(verts_w[vi].z - wz) <= 0.05 and abs(verts_w[vi].x) <= 0.20
+    ]
+    torso_cy = (sum(v.y for v in waist_pts) / len(waist_pts)) if waist_pts else 0.0
+
+    def _ring(z_target: float) -> tuple[float, float, float, float]:
+        band = [
+            verts_w[vi]
+            for vi in range(len(verts_w))
+            if vi not in arm_all
+            and abs(verts_w[vi].z - z_target) <= 0.030
+            and abs(verts_w[vi].x) <= 0.20
+            and abs(verts_w[vi].y - torso_cy) <= 0.16
+        ]
+        if not band:
+            return 0.0, torso_cy, 0.115, 0.088
+        xs = [v.x for v in band]
+        ys = [v.y for v in band]
+        cx = max(-0.03, min(0.03, 0.5 * (min(xs) + max(xs))))
+        cy = 0.5 * (min(ys) + max(ys))
+        rx = max(0.085, min(0.155, 0.5 * (max(xs) - min(xs))))
+        ry = max(0.065, min(0.120, 0.5 * (max(ys) - min(ys))))
+        return cx, cy, rx, ry
+
+    half_h = max(0.015, float(belt_height) * 0.5)
+    sections = []
+    mid_ring = _ring(wz)
+    for z_t in (wz - half_h, wz, wz + half_h):
+        rcx, rcy, rrx, rry = _ring(z_t)
+        sections.append({"center": (rcx, rcy, z_t), "rx": rrx + clearance_m, "ry": rry + clearance_m})
+
+    belt_obj = bt.loft_sections(
+        name,
+        sections,
+        segments=32,
+        closed_u=True,
+        cap_start=False,
+        cap_end=False,
+        smooth=True,
+        subsurf=0,
+        collection=col,
+    )
+    bt.add_modifiers(belt_obj, solidify=thickness_m, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
+    bt.smart_uv_unwrap(belt_obj)
+
+    buckle_obj = None
+    if add_buckle:
+        wcx, wcy, _, wry = mid_ring
+        buckle_y = wcy - wry - clearance_m - thickness_m - 0.004
+        buckle_obj = bt.create_beveled_panel(
+            f"{name}_Buckle",
+            [(-0.026, -0.020), (0.026, -0.020), (0.026, 0.020), (-0.026, 0.020)],
+            depth=0.010,
+            bevel_width=0.003,
+            location=(wcx, buckle_y, wz),
+            collection=col,
+        )
+        bt.smart_uv_unwrap(buckle_obj)
+
+    return {
+        "belt": belt_obj,
+        "buckle": buckle_obj,
+        "belt_name": belt_obj.name,
+        "buckle_name": buckle_obj.name if buckle_obj else None,
+    }
 
 
 def extract_sleeve_from_arm(
@@ -1369,9 +1618,12 @@ def extract_sleeve_from_arm(
         return d2, (ab_len + t2 * bc_len) / tot_len
 
     verts_w, polys = _eval_mesh_world_verts(body_obj)
+    arm_verts_side = _get_arm_vertex_indices(body_obj).get(f"arm_{side_u}") or set()
     selected: set[int] = set()
     used_v: set[int] = set()
     for pidx, poly in enumerate(polys):
+        if arm_verts_side and sum(1 for vi in poly["verts"] if vi in arm_verts_side) < 2:
+            continue
         c = poly["center"]
         if c.x * side_sign < abs(sh.x) - 0.025 and c.y > sh.y - 0.04:
             continue
@@ -1410,9 +1662,10 @@ def extract_sleeve_from_arm(
     for v in list(bm.verts):
         if not v.link_faces:
             bm.verts.remove(v)
-    interior = [v for v in bm.verts if not v.is_boundary]
-    if interior:
-        bmesh.ops.smooth_vert(bm, verts=interior, factor=0.18, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    all_verts = list(bm.verts)
+    if all_verts:
+        for _ in range(3):
+            bmesh.ops.smooth_vert(bm, verts=all_verts, factor=0.20, use_axis_x=True, use_axis_y=True, use_axis_z=True)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 
     obj = bt._finalize_bmesh_object(name, bm, collection=col, smooth=True, subsurf=0)
@@ -1523,12 +1776,12 @@ def build_layered_curve_hair(
     used_verts: set[int] = set()
     for pidx, p in enumerate(polys):
         c = p["center"]
-        if c.z < neck_z + 0.02:
+        if c.z < neck_z + 0.065 or abs(c.x) > 0.088 or c.z > head_top_z + 0.01:
             continue
-        # Exclude face front below forehead (protect eyes/brows/nose/mouth) while covering crown & rear head
-        is_back_or_crown = (c.y > head_cy + 0.005) or (c.z > eye_z + 0.045)
-        is_ear_cutout = abs(c.x) > 0.072 and c.z < eye_z + 0.025
-        if is_back_or_crown and not is_ear_cutout and c.z <= head_top_z + 0.01:
+        # Exclude face front below forehead AND pointed ears / lower jaw while covering crown + rear skull cleanly
+        is_crown = c.z > eye_z + 0.044
+        is_back_skull = c.y > head_cy + 0.015
+        if is_crown or is_back_skull:
             scalp_faces.add(pidx)
             for vi in p["verts"]:
                 used_verts.add(vi)
@@ -1553,12 +1806,16 @@ def build_layered_curve_hair(
         for v in list(bm.verts):
             if not v.link_faces:
                 bm.verts.remove(v)
-        # Gently tuck boundary edges inward so the scalp cap blends naturally without a helmet brim
+        # Smooth ALL scalp verts (boundary + interior) and tuck boundary inward for a smooth natural hairline
+        all_scalp = list(bm.verts)
+        if all_scalp:
+            for _ in range(4):
+                bmesh.ops.smooth_vert(bm, verts=all_scalp, factor=0.28, use_axis_x=True, use_axis_y=True, use_axis_z=True)
         for v in bm.verts:
             if v.is_boundary:
                 radial = head_cx - v.co
                 if radial.length > 1e-4:
-                    v.co += radial.normalized() * min(scalp_offset_m * 0.55, 0.006)
+                    v.co += radial.normalized() * min(scalp_offset_m * 0.65, 0.007)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
         scalp_obj = bt._finalize_bmesh_object(f"{name_prefix}_ScalpCap", bm, collection=col, smooth=True, subsurf=0)
         bt.add_modifiers(scalp_obj, solidify=scalp_thickness_m, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
@@ -1588,14 +1845,15 @@ def build_layered_curve_hair(
         y_clear = torso_back_y + 0.032
         for i in range(lock_count):
             frac = (2.0 * i / (lock_count - 1)) - 1.0  # -1..+1 across back width
-            x_root = frac * 0.095
-            y_root = head_cy + 0.065 + (1.0 - abs(frac)) * 0.032
+            x_root = frac * 0.092
+            y_root = head_cy + 0.060 + (1.0 - abs(frac)) * 0.028
             z_root = head_top_z - 0.025 - abs(frac) * 0.055
-            r_p = _snap_head(x_root, y_root, z_root, 0.014)
-            z_upper = z_root * 0.68 + z_tip_base * 0.32 + 0.02 * (1.0 - abs(frac))
-            y_upper = max(r_p[1] + 0.024, y_clear + 0.014 * (1.0 - abs(frac)))
+            r_p = _snap_head(x_root, y_root, z_root, -0.004)
+            p_emerge = _snap_head(frac * 0.105, y_root + 0.020, z_root - 0.045, 0.014)
+            z_upper = z_root * 0.65 + z_tip_base * 0.35 + 0.02 * (1.0 - abs(frac))
+            y_upper = max(p_emerge[1] + 0.018, y_clear + 0.014 * (1.0 - abs(frac)))
             x_upper = frac * 0.130
-            z_lower = z_root * 0.30 + z_tip_base * 0.70 + 0.03 * (1.0 - abs(frac))
+            z_lower = z_root * 0.28 + z_tip_base * 0.72 + 0.03 * (1.0 - abs(frac))
             y_lower = max(y_upper + 0.008, y_clear + 0.024)
             x_lower = frac * 0.155
             z_tip = z_tip_base + (abs(frac) * 0.09) + (0.035 if i % 2 else 0.0)
@@ -1603,20 +1861,21 @@ def build_layered_curve_hair(
             y_tip = max(y_lower + 0.006, y_clear + 0.030)
             prim_list.append(
                 {
-                    "points": [r_p, (x_upper, y_upper, z_upper), (x_lower, y_lower, z_lower), (x_tip, y_tip, z_tip)],
-                    "radii": [1.05, 1.35, 0.85, 0.06],
-                    "width_scale": 1.35 if abs(frac) < 0.5 else 1.15,
-                    "tilts_deg": [frac * 18.0, frac * 15.0, frac * 12.0, frac * 8.0],
+                    "points": [r_p, p_emerge, (x_upper, y_upper, z_upper), (x_lower, y_lower, z_lower), (x_tip, y_tip, z_tip)],
+                    "radii": [0.22, 1.15, 1.25, 0.78, 0.05],
+                    "width_scale": 1.32 if abs(frac) < 0.5 else 1.12,
+                    "tilts_deg": [frac * 18.0, frac * 16.0, frac * 15.0, frac * 12.0, frac * 8.0],
                 }
             )
         for j in range(6):
             frac = (2.0 * j / 5.0) - 1.0
             x_r = frac * 0.085
-            p0 = _snap_head(x_r, head_cy + 0.08, head_top_z - 0.01, 0.022)
+            p0 = _snap_head(x_r, head_cy + 0.075, head_top_z - 0.015, -0.003)
+            p_em = _snap_head(x_r * 1.12, head_cy + 0.095, head_top_z - 0.055, 0.016)
             p1 = (frac * 0.125, y_clear + 0.030, head_top_z * 0.65 + z_tip_base * 0.35 + 0.04)
             p2 = (frac * 0.145, y_clear + 0.038, head_top_z * 0.30 + z_tip_base * 0.70 + 0.04)
             p3 = (frac * 0.155, y_clear + 0.044, z_tip_base + 0.05 + (j % 2) * 0.04)
-            sec_list.append({"points": [p0, p1, p2, p3], "radii": [0.9, 1.08, 0.72, 0.06], "width_scale": 0.95})
+            sec_list.append({"points": [p0, p_em, p1, p2, p3], "radii": [0.22, 0.95, 1.05, 0.72, 0.05], "width_scale": 0.95})
 
     if auto_side_locks:
         scfg = auto_side_locks if isinstance(auto_side_locks, dict) else {}
@@ -1624,28 +1883,28 @@ def build_layered_curve_hair(
         z_bot = max(float(lm["shoulder_L"][2]) - 0.04, eye_z - s_len)
         brow_z = float(lm.get("eyebrow_L", [0, 0, eye_z + 0.035])[2])
         for sg in (1.0, -1.0):
-            # Cheek-framing locks strictly outside eye visibility band (|x| >= 0.092)
-            p0 = _snap_head(sg * 0.096, head_cy - 0.045, eye_z + 0.068, 0.015)
-            p1 = (sg * 0.112, head_cy - 0.055, eye_z - 0.040)
+            # Cheek-framing locks tapered at scalp root & strictly outside eye visibility band (|x| >= 0.092)
+            p0 = _snap_head(sg * 0.092, head_cy - 0.042, eye_z + 0.072, 0.002)
+            p1 = (sg * 0.112, head_cy - 0.055, eye_z - 0.035)
             p2 = (sg * 0.098, head_cy - 0.045, z_bot)
             prim_list.append(
                 {
                     "points": [p0, p1, p2],
-                    "radii": [0.85, 0.95, 0.08],
+                    "radii": [0.25, 0.90, 0.08],
                     "width_scale": 0.85,
                     "tilts_deg": [sg * 32.0, sg * 24.0, sg * 12.0],
                 }
             )
-            p0_b = _snap_head(sg * 0.086, head_cy - 0.055, eye_z + 0.072, 0.015)
-            p1_b = _snap_head(sg * 0.098, head_cy - 0.052, eye_z + 0.012, 0.017)
+            p0_b = _snap_head(sg * 0.084, head_cy - 0.052, eye_z + 0.076, 0.002)
+            p1_b = _snap_head(sg * 0.098, head_cy - 0.052, eye_z + 0.012, 0.016)
             p2_b = (sg * 0.096, head_cy - 0.042, eye_z - 0.075)
-            sec_list.append({"points": [p0_b, p1_b, p2_b], "radii": [0.72, 0.65, 0.08], "width_scale": 0.68})
+            sec_list.append({"points": [p0_b, p1_b, p2_b], "radii": [0.24, 0.72, 0.08], "width_scale": 0.68})
             # 2 wispy angled forehead bangs per side strictly ABOVE eyebrows (z >= brow_z + 0.008)
             for b_k, bx_s, bx_e in ((0, 0.015, 0.072), (1, 0.042, 0.095)):
-                bp0 = _snap_head(sg * bx_s, head_cy - 0.068, eye_z + 0.085, 0.016)
-                bp1 = _snap_head(sg * (0.5 * (bx_s + bx_e)), head_cy - 0.076, max(brow_z + 0.018, eye_z + 0.054), 0.015)
-                bp2 = _snap_head(sg * bx_e, head_cy - 0.062, max(brow_z + 0.008, eye_z + 0.038), 0.014)
-                sec_list.append({"points": [bp0, bp1, bp2], "radii": [0.58, 0.50, 0.08], "width_scale": 0.55})
+                bp0 = _snap_head(sg * bx_s, head_cy - 0.068, eye_z + 0.085, 0.004)
+                bp1 = _snap_head(sg * (0.5 * (bx_s + bx_e)), head_cy - 0.076, max(brow_z + 0.018, eye_z + 0.054), 0.014)
+                bp2 = _snap_head(sg * bx_e, head_cy - 0.062, max(brow_z + 0.008, eye_z + 0.038), 0.012)
+                sec_list.append({"points": [bp0, bp1, bp2], "radii": [0.25, 0.55, 0.08], "width_scale": 0.55})
 
     if auto_crown_braid:
         bcfg = auto_crown_braid if isinstance(auto_crown_braid, dict) else {}
@@ -1740,7 +1999,7 @@ def pose_hand_and_attach_prop(
     thumb_oppose: float = 0.45,
     prop_obj: Any | None = None,
 ) -> dict[str, Any]:
-    """Pose hand fingers on the Base Mesh into a natural grip and attach a handheld prop cleanly."""
+    """Pose hand fingers idempotently via SK_HandPose_{side} and attach a handheld prop cleanly in front of torso."""
     _require_blender()
     if body_obj.type != "MESH" or body_obj.data is None:
         raise ValueError("Expected MESH body_obj")
@@ -1749,46 +2008,56 @@ def pose_hand_and_attach_prop(
         raise ValueError("side must be 'L' or 'R'")
     side_sign = 1.0 if side_u == "L" else -1.0
 
-    info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
-    lm = info["landmarks"]
-    wrist = Vector(lm[f"wrist_{side_u}"])
-    hand_c = Vector(lm[f"hand_{side_u}"])
-    palm_dir = (hand_c - wrist)
-    if palm_dir.length < 1e-4:
-        palm_dir = Vector((side_sign, 0.0, -0.3))
-    palm_dir.normalize()
+    arm_info = _get_arm_vertex_indices(body_obj)
+    hand_verts = arm_info.get(f"hand_{side_u}") or set()
 
     mesh = body_obj.data
     if not mesh.shape_keys:
         body_obj.shape_key_add(name="Basis", from_mix=False)
-    sk = mesh.shape_keys.key_blocks.get("SK_Stylization") or body_obj.shape_key_add(name="SK_Stylization", from_mix=True)
-    sk.value = 1.0
+    basis = mesh.shape_keys.key_blocks["Basis"]
+    hsk_name = f"SK_HandPose_{side_u}"
+    sk = mesh.shape_keys.key_blocks.get(hsk_name) or body_obj.shape_key_add(name=hsk_name, from_mix=False)
+    for i in range(len(basis.data)):
+        sk.data[i].co = basis.data[i].co.copy()
+    sk.value = 0.0
+    mesh.update()
 
+    info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
+    lm = info["landmarks"]
+    wrist = Vector(lm[f"wrist_{side_u}"])
+    hand_c = Vector(lm[f"hand_{side_u}"])
+    palm_dir = hand_c - wrist
+    if palm_dir.length < 1e-4:
+        palm_dir = Vector((side_sign, 0.0, -0.3))
+    palm_dir.normalize()
+
+    verts_pre, _ = _eval_mesh_world_verts(body_obj)
     mat = body_obj.matrix_world
     inv_mat = mat.inverted()
 
-    # Deform outer finger vertices smoothly into palm curl toward -Y/inward pocket
     curled_count = 0
-    for i, item in enumerate(sk.data):
-        wp = mat @ item.co
+    for i, wp in enumerate(verts_pre):
+        if hand_verts and i not in hand_verts:
+            continue
         rel = wp - wrist
         along = rel.dot(palm_dir)
         dist_hand = (wp - hand_c).length
-        if 0.03 < along < 0.19 and dist_hand < 0.13:
-            # Thumb lies more forward (-Y) than the four main fingers
+        if 0.02 < along < 0.20 and dist_hand < 0.14:
             is_thumb = (wp.y < hand_c.y - 0.015) and along < 0.12
             tip_t = max(0.0, min(1.0, (along - 0.04) / 0.12))
             if is_thumb:
                 delta = Vector((-side_sign * 0.018, 0.016, 0.010)) * (thumb_oppose * tip_t)
             else:
                 delta = Vector((-side_sign * 0.022, -0.028, 0.015)) * (finger_curl * (tip_t ** 1.3))
-            sk.data[i].co = inv_mat @ (wp + delta)
+            sk.data[i].co = basis.data[i].co + (inv_mat @ (wp + delta) - inv_mat @ wp)
             curled_count += 1
+    sk.value = 1.0
     mesh.update()
 
-    # Compute actual grip pocket center from hand vertices
     verts_w, _ = _eval_mesh_world_verts(body_obj)
-    finger_pts = [v for v in verts_w if (v - hand_c).length < 0.09]
+    finger_pts = [verts_w[i] for i in hand_verts if i < len(verts_w)] if hand_verts else [
+        v for v in verts_w if (v - hand_c).length < 0.09
+    ]
     grip_pocket = (
         sum(finger_pts, Vector((0, 0, 0))) / len(finger_pts)
         if finger_pts
@@ -1796,15 +2065,18 @@ def pose_hand_and_attach_prop(
     ) + Vector((-side_sign * 0.012, -0.025, 0.0))
 
     if prop_obj is not None:
-        # Align prop center smoothly into the hand grip pocket so fingers/thumb embrace its edge
+        neck_z = float(lm["neck"][2])
+        waist_z = float(lm["waist"][2])
         pverts_w, _ = _eval_mesh_world_verts(prop_obj)
         if pverts_w:
             min_p = Vector((min(v.x for v in pverts_w), min(v.y for v in pverts_w), min(v.z for v in pverts_w)))
             max_p = Vector((max(v.x for v in pverts_w), max(v.y for v in pverts_w), max(v.z for v in pverts_w)))
             cur_center = 0.5 * (min_p + max_p)
-            # Offset edge slightly inward so hand grips the inner corner naturally without burying it in the palm
-            target_edge_offset = Vector((-side_sign * 0.035, -0.030, -0.015))
-            prop_obj.location += (grip_pocket + target_edge_offset - cur_center)
+            target_center = grip_pocket + Vector((-side_sign * 0.035, -0.030, -0.015))
+            # Never bury the handheld slate inside the head or torso
+            target_center.y = min(target_center.y, min(grip_pocket.y - 0.015, -0.15))
+            target_center.z = max(waist_z, min(neck_z - 0.03, target_center.z))
+            prop_obj.location += (target_center - cur_center)
 
     return {
         "side": side_u,
@@ -1822,7 +2094,7 @@ def pose_arm_for_prop_hold(
     shoulder_inward_deg: float = 18.0,
     elbow_bend_deg: float = 72.0,
 ) -> dict[str, Any]:
-    """Smoothly pose the Base Mesh arm forward and inward around shoulder/elbow via SK_Stylization."""
+    """Idempotently pose the Base Mesh arm forward and inward around shoulder/elbow via SK_ArmPose_{side}."""
     _require_blender()
     from mathutils import Quaternion
 
@@ -1833,13 +2105,17 @@ def pose_arm_for_prop_hold(
         raise ValueError("side must be 'L' or 'R'")
     side_sign = 1.0 if side_u == "L" else -1.0
 
-    info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
-    lm = info["landmarks"]
-    sh = Vector(lm[f"shoulder_{side_u}"])
-    el = Vector(lm[f"elbow_{side_u}"])
-    wr = Vector(lm[f"wrist_{side_u}"])
+    shoulder_pitch_deg = max(-10.0, min(52.0, float(shoulder_pitch_deg)))
+    shoulder_inward_deg = max(-10.0, min(32.0, float(shoulder_inward_deg)))
+    elbow_bend_deg = max(0.0, min(88.0, float(elbow_bend_deg)))
 
-    arm_dir = (el - sh)
+    arm_info = _get_arm_vertex_indices(body_obj)
+    arm_verts = arm_info[f"arm_{side_u}"]
+    sh = arm_info[f"sh_{side_u}"]
+    el = arm_info[f"el_{side_u}"]
+    wr = arm_info[f"wr_{side_u}"]
+
+    arm_dir = el - sh
     if arm_dir.length < 1e-4:
         arm_dir = Vector((side_sign * 0.45, 0.0, -0.88))
     arm_dir.normalize()
@@ -1847,61 +2123,66 @@ def pose_arm_for_prop_hold(
     mesh = body_obj.data
     if not mesh.shape_keys:
         body_obj.shape_key_add(name="Basis", from_mix=False)
-    sk = mesh.shape_keys.key_blocks.get("SK_Stylization") or body_obj.shape_key_add(name="SK_Stylization", from_mix=True)
-    sk.value = 1.0
+    basis = mesh.shape_keys.key_blocks["Basis"]
+    ask_name = f"SK_ArmPose_{side_u}"
+    sk = mesh.shape_keys.key_blocks.get(ask_name) or body_obj.shape_key_add(name=ask_name, from_mix=False)
+    hsk = mesh.shape_keys.key_blocks.get(f"SK_HandPose_{side_u}")
+    hsk_saved = hsk.value if hsk is not None else 0.0
 
-    mat = body_obj.matrix_world
-    inv_mat = mat.inverted()
-
-    # Stage 1: Rotate upper arm + forearm + hand forward (-Y) & slightly inward around shoulder pivot
-    # Rotating (side_sign*X, 0, -Z) around (-1, 0, 0) swings downward arm forward into -Y!
-    q_pitch = Quaternion(Vector((-1.0, 0.0, 0.0)), math.radians(float(shoulder_pitch_deg)))
-    q_in = Quaternion(Vector((0.0, 0.0, -side_sign)), math.radians(float(shoulder_inward_deg)))
-    q_shoulder = q_in @ q_pitch
-
-    moved_sh = 0
-    for i, item in enumerate(sk.data):
-        wp = mat @ item.co
-        if wp.x * side_sign < abs(sh.x) - 0.02:
-            continue
-        along = (wp - sh).dot(arm_dir)
-        perp = ((wp - sh) - arm_dir * along).length
-        if along > -0.04 and perp < 0.13 and wp.z <= sh.z + 0.08:
-            t = max(0.0, min(1.0, (along + 0.03) / 0.08))
-            w = t * t * (3.0 - 2.0 * t)
-            if w > 1e-4:
-                rot_wp = sh + (q_shoulder @ (wp - sh))
-                sk.data[i].co = inv_mat @ wp.lerp(rot_wp, w)
-                moved_sh += 1
+    for i in range(len(basis.data)):
+        sk.data[i].co = basis.data[i].co.copy()
+    sk.value = 0.0
+    if hsk is not None:
+        hsk.value = 0.0
     mesh.update()
 
-    # Re-locate elbow & forearm axis after shoulder rotation
-    el_rot = sh + (q_shoulder @ (el - sh))
-    wr_rot = sh + (q_shoulder @ (wr - sh))
-    fore_dir = (wr_rot - el_rot)
-    if fore_dir.length < 1e-4:
-        fore_dir = arm_dir
-    fore_dir.normalize()
+    try:
+        verts_base, _ = _eval_mesh_world_verts(body_obj)
+        mat = body_obj.matrix_world
+        inv_mat = mat.inverted()
 
-    # Bend forearm smoothly upward & forward (-Y/+Z, slight inward toward torso) around rotated elbow
-    bend_axis = Vector((-1.0, 0.0, -0.25 * side_sign)).normalized()
-    q_elbow = Quaternion(bend_axis, math.radians(float(elbow_bend_deg)))
+        q_pitch = Quaternion(Vector((-1.0, 0.0, 0.0)), math.radians(shoulder_pitch_deg))
+        q_in = Quaternion(Vector((0.0, 0.0, -side_sign)), math.radians(shoulder_inward_deg))
+        q_shoulder = q_in @ q_pitch
 
-    moved_el = 0
-    for i, item in enumerate(sk.data):
-        wp = mat @ item.co
-        if wp.x * side_sign < abs(sh.x) - 0.04:
-            continue
-        along_f = (wp - el_rot).dot(fore_dir)
-        perp_f = ((wp - el_rot) - fore_dir * along_f).length
-        if along_f > -0.02 and perp_f < 0.11:
-            t = max(0.0, min(1.0, (along_f + 0.02) / 0.07))
-            w = t * t * (3.0 - 2.0 * t)
-            if w > 1e-4:
-                rot_wp = el_rot + (q_elbow @ (wp - el_rot))
-                sk.data[i].co = inv_mat @ wp.lerp(rot_wp, w)
-                moved_el += 1
-    mesh.update()
+        el_rot = sh + (q_shoulder @ (el - sh))
+        fore_dir = (sh + (q_shoulder @ (wr - sh))) - el_rot
+        if fore_dir.length < 1e-4:
+            fore_dir = arm_dir
+        fore_dir.normalize()
+        bend_axis = Vector((-1.0, 0.0, -0.25 * side_sign)).normalized()
+        q_elbow = Quaternion(bend_axis, math.radians(elbow_bend_deg))
+
+        moved_sh = 0
+        moved_el = 0
+        for i in sorted(arm_verts):
+            if i >= len(verts_base):
+                continue
+            wp = verts_base[i]
+            cur_wp = wp
+            along = (wp - sh).dot(arm_dir)
+            perp = ((wp - sh) - arm_dir * along).length
+            if along > -0.04 and perp < 0.13 and wp.z <= sh.z + 0.08:
+                t = max(0.0, min(1.0, (along + 0.03) / 0.08))
+                w = t * t * (3.0 - 2.0 * t)
+                if w > 1e-4:
+                    cur_wp = wp.lerp(sh + (q_shoulder @ (wp - sh)), w)
+                    moved_sh += 1
+            along_f = (cur_wp - el_rot).dot(fore_dir)
+            perp_f = ((cur_wp - el_rot) - fore_dir * along_f).length
+            if along_f > -0.02 and perp_f < 0.115:
+                t_f = max(0.0, min(1.0, (along_f + 0.02) / 0.07))
+                w_f = t_f * t_f * (3.0 - 2.0 * t_f)
+                if w_f > 1e-4:
+                    cur_wp = cur_wp.lerp(el_rot + (q_elbow @ (cur_wp - el_rot)), w_f)
+                    moved_el += 1
+            if (cur_wp - wp).length > 1e-6:
+                sk.data[i].co = basis.data[i].co + (inv_mat @ cur_wp - inv_mat @ wp)
+    finally:
+        sk.value = 1.0
+        if hsk is not None:
+            hsk.value = hsk_saved
+        mesh.update()
 
     after_lm = inspect_anatomical_regions(body_obj, assign_vertex_groups=True)["landmarks"]
     return {
@@ -1985,6 +2266,10 @@ def audit_base_mesh_integrity(
                 eye_ref_zs.append(0.5 * (min(v.z for v in everts) + max(v.z for v in everts)))
     eye_ref_z = (sum(eye_ref_zs) / len(eye_ref_zs)) if eye_ref_zs else orig_eye_z
 
+    splits_body = _find_head_shoulder_splits(verts_b, bz_min, bh)
+    body_neck_z = splits_body["neck_z"]
+    body_waist_z = splits_body["waist_z"]
+
     objs = list(col.all_objects) if col else list(scene.objects)
     deps = bpy.context.evaluated_depsgraph_get()
     for o in objs:
@@ -2004,12 +2289,35 @@ def audit_base_mesh_integrity(
         xs = [c.x for c in corners]
         ys = [c.y for c in corners]
         oz_min, oz_max = min(zs), max(zs)
-        if oz_max > bz_max + 0.35 or oz_max - oz_min > 2.00 or (max(xs) - min(xs)) > 1.75 or (max(ys) - min(ys)) > 1.75:
+        ox_span = max(xs) - min(xs)
+        oy_span = max(ys) - min(ys)
+        cx_o = 0.5 * (min(xs) + max(xs))
+        cy_o = 0.5 * (min(ys) + max(ys))
+        cz_o = 0.5 * (oz_min + oz_max)
+        if oz_max > bz_max + 0.35 or oz_max - oz_min > 2.00 or ox_span > 1.75 or oy_span > 1.75:
             issues.append(f"Mesh {o.name!r} has extreme spike/extent bounds z=[{oz_min:.2f}..{oz_max:.2f}].")
         if oz_min < -0.03:
             issues.append(f"Mesh {o.name!r} extends below ground plane (min_z={oz_min:.2f}m).")
-        if ("mouth" in lname or "lip" in lname) and 0.5 * (oz_min + oz_max) < bz_max - 0.35:
-            issues.append(f"Facial lip/mouth mesh {o.name!r} misplaced below head (z={0.5*(oz_min+oz_max):.3f}m).")
+        if ("mouth" in lname or "lip" in lname) and cz_o < bz_max - 0.35:
+            issues.append(f"Facial lip/mouth mesh {o.name!r} misplaced below head (z={cz_o:.3f}m).")
+        if any(k in lname for k in ("hand_l", "hand_r")) and len(o.data.vertices) < 250:
+            issues.append(f"Low-poly primitive replacement hand {o.name!r} (verts={len(o.data.vertices)} < 250); keep SM_BaseBody articulated hands.")
+        if "skirt" in lname and (oy_span > 0.60 or ox_span > 0.72):
+            issues.append(f"Skirt {o.name!r} bounds bloated (x={ox_span:.2f}m, y={oy_span:.2f}m); check arm exclusion.")
+        if any(k in lname for k in ("prop", "slate", "tablet")):
+            em_p = eo.to_mesh()
+            try:
+                prop_eval_verts = len(em_p.vertices)
+            finally:
+                eo.to_mesh_clear()
+            if prop_eval_verts < 24:
+                issues.append(f"Handheld prop {o.name!r} is a raw low-poly box (verts={prop_eval_verts} < 24); use bt.create_beveled_panel.")
+            in_head = body_neck_z <= cz_o <= bz_max and abs(cx_o) < 0.09 and cy_o > -0.10
+            in_torso = body_waist_z <= cz_o <= body_neck_z and abs(cx_o) < 0.09 and cy_o > -0.08
+            if in_head or in_torso:
+                issues.append(f"Handheld prop {o.name!r} is buried inside head/torso at ({cx_o:.2f}, {cy_o:.2f}, {cz_o:.2f}).")
+        if any(k in lname for k in ("bodice", "tunic", "skirt")) and len(o.data.materials) > 1:
+            issues.append(f"Garment {o.name!r} uses {len(o.data.materials)} material slots (never paint jagged per-polygon cutouts onto tunic/skirt!).")
         if eye_ref_z is not None and eye_ref_y is not None and any(tok in lname for tok in ("hair", "mane", "card")):
             em_eval = eo.to_mesh()
             try:

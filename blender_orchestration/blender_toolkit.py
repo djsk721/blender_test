@@ -2560,11 +2560,15 @@ def create_rig_and_bind(
 
     bound_meshes: list[str] = []
     _rigid_markers = ("prop", "slate", "tablet", "sword", "weapon", "staff", "lantern", "shield")
+    _head_rigid_markers = ("eye", "eyelash", "eyebrow", "scalpcap", "braid")
+    head_bone_name = next((bn for (bn, _, _) in deform_bones if bn.lower() == "head"), None)
     for mobj in candidates:
         mobj.vertex_groups.clear()
         vg_map = {bn: mobj.vertex_groups.new(name=bn) for (bn, _, _) in deform_bones}
         mat_w = mobj.matrix_world
-        is_rigid_prop = any(mk in mobj.name.lower() for mk in _rigid_markers)
+        lname = mobj.name.lower()
+        is_rigid_prop = any(mk in lname for mk in _rigid_markers)
+        is_head_acc = head_bone_name is not None and any(mk in lname for mk in _head_rigid_markers)
         if is_rigid_prop and len(mobj.data.vertices) > 0 and deform_bones:
             # Bind rigid held props 100% to the single closest hand/wrist (or nearest deform) bone so they never stretch or lag
             ctr_w = sum((mat_w @ v.co for v in mobj.data.vertices), Vector((0.0, 0.0, 0.0))) / len(mobj.data.vertices)
@@ -2572,6 +2576,8 @@ def create_rig_and_bind(
             pool = hand_bones or deform_bones
             best_bn = min(pool, key=lambda b: _pt_seg_dist(ctr_w, b[1], b[2]))[0]
             vg_map[best_bn].add(list(range(len(mobj.data.vertices))), 1.0, "REPLACE")
+        elif is_head_acc and len(mobj.data.vertices) > 0 and head_bone_name is not None:
+            vg_map[head_bone_name].add(list(range(len(mobj.data.vertices))), 1.0, "REPLACE")
         else:
             for v in mobj.data.vertices:
                 wp = mat_w @ v.co
@@ -2601,7 +2607,7 @@ def create_rig_and_bind(
 
 def create_cycle_animation(
     armature_obj: Any,
-    keyframe_specs: dict[int, dict[str, tuple[float, float, float]]],
+    keyframe_specs: dict[int, dict[str, tuple[float, float, float]]] | list[dict[str, Any]],
     *,
     action_name: str = "ACT_Cycle",
     frame_start: int = 1,
@@ -2624,13 +2630,30 @@ def create_cycle_animation(
     for pb in armature_obj.pose.bones:
         pb.rotation_mode = "XYZ"
 
+    # Normalize either canonical {frame: {bone: (rx, ry, rz)}} degrees dict or list of key dicts
+    norm_specs: dict[int, dict[str, tuple[float, float, float]]] = {}
+    if isinstance(keyframe_specs, list):
+        for item in keyframe_specs:
+            if not isinstance(item, dict):
+                continue
+            fr = int(item.get("frame", frame_start))
+            bname = item.get("bone") or item.get("name")
+            rot = item.get("rotation_euler") if "rotation_euler" in item else item.get("euler")
+            if bname and rot is not None:
+                r_tup = (float(rot[0]), float(rot[1]), float(rot[2]))
+                if max(abs(x) for x in r_tup) <= 3.2:
+                    r_tup = tuple(math.degrees(x) for x in r_tup)  # type: ignore[assignment]
+                norm_specs.setdefault(fr, {})[str(bname)] = r_tup
+    else:
+        for fr, bone_rots in dict(keyframe_specs or {}).items():
+            norm_specs[int(fr)] = {str(bn): (float(v[0]), float(v[1]), float(v[2])) for bn, v in dict(bone_rots).items()}
+
     # Guarantee clean loop closure
-    if frame_start in keyframe_specs and frame_end not in keyframe_specs:
-        keyframe_specs = dict(keyframe_specs)
-        keyframe_specs[frame_end] = dict(keyframe_specs[frame_start])
+    if frame_start in norm_specs and frame_end not in norm_specs:
+        norm_specs[frame_end] = dict(norm_specs[frame_start])
 
     keyed_bones: set[str] = set()
-    for frame, bone_rots in sorted(keyframe_specs.items()):
+    for frame, bone_rots in sorted(norm_specs.items()):
         scene.frame_set(int(frame))
         for bname, deg_xyz in bone_rots.items():
             pb = armature_obj.pose.bones.get(bname)
@@ -2646,7 +2669,7 @@ def create_cycle_animation(
         "frame_start": int(frame_start),
         "frame_end": int(frame_end),
         "keyed_bones": sorted(keyed_bones),
-        "loop_closed": (frame_start in keyframe_specs and frame_end in keyframe_specs),
+        "loop_closed": (frame_start in norm_specs and frame_end in norm_specs),
     }
 
 
