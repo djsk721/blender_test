@@ -141,6 +141,11 @@ ORCHESTRATION_REL_FILES = [
     "blender_orchestration/visual_qa.py",
     "blender_orchestration/production_pipeline.py",
     "blender_orchestration/regression_fixtures.py",
+    "blender_orchestration/character_modeling.py",
+    "blender_orchestration/repair_strategies.py",
+    "blender_orchestration/multimodal_qa.py",
+    "blender_orchestration/opencode_runner.py",
+    "blender_orchestration/sequential_benchmark.py",
     "scripts/benchmark_preflight.py",
 ]
 

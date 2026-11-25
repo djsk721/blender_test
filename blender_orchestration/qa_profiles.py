@@ -722,3 +722,51 @@ def detect_polygon_inflation(before_metrics: dict[str, Any], after_metrics: dict
             else "Polygon delta acceptable."
         ),
     }
+
+
+def detect_2d_projection_or_primitive_shortcuts(
+    script_text: str,
+    scene_audit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Detect forbidden 2D pixel-depth projection, UV-sphere stacking, tube hair, and Subsurf-only shortcuts."""
+    src = (script_text or "").lower()
+    flags: list[dict[str, str]] = []
+
+    if ("ray_cast" in src and ("def face(" in src or "250" in src)) or (
+        "def p(" in src and "782-" in src
+    ):
+        flags.append({
+            "shortcut": "2d_pixel_depth_projection",
+            "reason": "Script projects 2D image pixel coordinates onto depth scalars instead of building consistent 3D forms.",
+        })
+
+    if "create_uvsphere" in src and "eyelid" not in src and "socket" not in src:
+        flags.append({
+            "shortcut": "uv_sphere_without_orbital_socket",
+            "reason": "Raw UV sphere eyes/joints placed without sculpted orbital socket or eyelid connection.",
+        })
+
+    if ("sweep(" in src or "cylinder" in src) and "hair" in src and "ribbon" not in src and "crescent" not in src:
+        flags.append({
+            "shortcut": "rope_tube_hair",
+            "reason": "Hair constructed from uniform circular sweep/cylinder tubes rather than sculpted directional clumps.",
+        })
+
+    if "subsurf" in src and "sculpt" not in src and "bmesh" not in src and "vertices" not in src:
+        flags.append({
+            "shortcut": "subsurf_only_polish",
+            "reason": "Relies solely on Subdivision Surface modifier without structural geometry sculpting.",
+        })
+
+    if scene_audit:
+        mesh_count = int(scene_audit.get("mesh_objects") or 0)
+        if mesh_count > 60:
+            flags.append({
+                "shortcut": "excessive_primitive_fragmentation",
+                "reason": f"Character split into {mesh_count} fragmented primitive objects (> 60 threshold).",
+            })
+
+    return {
+        "clean": len(flags) == 0,
+        "shortcuts_detected": flags,
+    }

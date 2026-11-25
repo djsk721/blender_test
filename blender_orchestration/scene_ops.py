@@ -4,6 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
+
+from .character_modeling import (
+    build_anatomical_body_costume_bpy,
+    build_anatomical_hair_bpy,
+    build_anatomical_hands_bpy,
+    build_anatomical_head_face_bpy,
+    build_structural_remodel_bpy,
+)
 
 
 def build_init_scene_code(scene_name: str, asset_id: str) -> str:
@@ -518,6 +527,8 @@ elif 'BLENDER_EEVEE' in engines:
 else:
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = 16
+if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+    scene.eevee.taa_render_samples = 8
 
 scene.render.resolution_x = 800
 scene.render.resolution_y = 600
@@ -1047,6 +1058,8 @@ elif 'BLENDER_EEVEE' in engines:
 else:
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = 16
+if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+    scene.eevee.taa_render_samples = 8
 
 scene.render.resolution_x = {int(width)}
 scene.render.resolution_y = {int(height)}
@@ -1255,500 +1268,36 @@ print("__ORCH_JSON__:" + json.dumps(payload))
 
 
 def build_character_face_body_costume_code(scene_name: str, asset_id: str, *, include_held_slate: bool = True) -> str:
-    """Stage 3: Refine existing head (recessed eyes/brow/nose/jaw/ears), articulated hands, costume & boots."""
-    return f'''
-import bpy, bmesh, json, math
+    """Stage 3: Build anatomical 3D head/eyes/eyelids, articulated hands, and contoured costume & boots."""
+    head_code = build_anatomical_head_face_bpy(scene_name, asset_id)
+    hands_code = build_anatomical_hands_bpy(scene_name, asset_id, hold_prop=include_held_slate)
+    costume_code = build_anatomical_body_costume_bpy(scene_name, asset_id)
+    summary = f'''
+import bpy, json
 from mathutils import Vector
-
-SCENE_NAME = {json.dumps(scene_name)}
-ASSET_ID = {json.dumps(asset_id)}
-INCLUDE_SLATE = {repr(bool(include_held_slate))}
-
-scene = bpy.data.scenes[SCENE_NAME]
-bpy.context.window.scene = scene
-col_face = bpy.data.collections["COL_Character_Face"]
-col_body = bpy.data.collections["COL_Character_Body"]
-col_costume = bpy.data.collections["COL_Character_Costume"]
+scene = bpy.data.scenes[{json.dumps(scene_name)}]
 col_export = bpy.data.collections["COL_Export"]
-
-def upsert_mesh_obj(name, bm, cols, stage="face_body_costume"):
-    old = bpy.data.objects.get(name)
-    if old is not None:
-        d = old.data
-        bpy.data.objects.remove(old, do_unlink=True)
-        if d is not None and d.users == 0:
-            bpy.data.meshes.remove(d)
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    mesh = bpy.data.meshes.new(name)
-    bm.to_mesh(mesh)
-    bm.free()
-    if not mesh.uv_layers:
-        mesh.uv_layers.new(name="UVMap")
-    for p in mesh.polygons:
-        p.use_smooth = True
-    obj = bpy.data.objects.new(name, mesh)
-    for col in cols:
-        col.objects.link(obj)
-    obj["asset_id"] = ASSET_ID
-    obj["production_stage"] = stage
-    return obj
-
-# 1. Modify existing SM_Char_Head IN-PLACE to sculpt recessed eye sockets, nose bridge, brow, cheeks, and chin
-head_obj = bpy.data.objects["SM_Char_Head"]
-def g2(x, z, cx, cz, rx, rz):
-    return math.exp(-((x - cx) / rx) ** 2 - ((z - cz) / rz) ** 2)
-
-max_face_disp = 0.0
-for v in head_obj.data.vertices:
-    if v.co.y < -0.015:  # anterior facial plane (-Y front)
-        x, z = v.co.x, v.co.z
-        # Recessed orbital sockets at (+/-0.032, 1.515), raised nose bridge, cheek volume, jaw taper
-        socket = -0.011 * (g2(x, z, -0.032, 1.516, 0.018, 0.013) + g2(x, z, 0.032, 1.516, 0.018, 0.013))
-        brow = 0.005 * g2(x, z, 0.0, 1.535, 0.048, 0.009)
-        nose = 0.012 * g2(x, z, 0.0, 1.495, 0.011, 0.018)
-        cheeks = 0.004 * (g2(x, z, -0.044, 1.488, 0.020, 0.016) + g2(x, z, 0.044, 1.488, 0.020, 0.016))
-        lips = 0.005 * g2(x, z, 0.0, 1.460, 0.018, 0.007)
-        delta_y = -(socket + brow + nose + cheeks + lips)
-        v.co.y += delta_y
-        max_face_disp = max(max_face_disp, abs(delta_y))
-head_obj.data.update()
-head_obj["production_stage"] = "face_body_costume"
-
-# 2. Recessed almond eyeballs + sculpted eyelid rims + pointed Hylian ears
-bm_eyes = bmesh.new()
-for sx in (-1.0, 1.0):
-    # Slightly flattened almond-recessed eyeball seated inside socket
-    res = bmesh.ops.create_uvsphere(bm_eyes, u_segments=16, v_segments=12, radius=0.012)
-    for v in res["verts"]:
-        v.co.x *= 1.12
-        v.co.y *= 0.65
-        v.co.z *= 0.72
-        v.co += Vector((sx * 0.032, -0.088, 1.516))
-    # Upper eyelid wrap arch
-    for k in range(7):
-        t = k / 6.0
-        ex = sx * (0.018 + 0.028 * t)
-        ez = 1.516 + 0.009 * math.sin(math.pi * t)
-        ey = -0.095 + 0.004 * abs(t - 0.5)
-        r_lid = bmesh.ops.create_uvsphere(bm_eyes, u_segments=8, v_segments=6, radius=0.0028)
-        for v in r_lid["verts"]:
-            v.co += Vector((ex, ey, ez))
-    # Pointed Hylian ear anchored to head side
-    ear_rings = [
-        (sx * 0.078, 0.002, 1.505, 0.008, 0.014),
-        (sx * 0.105, 0.016, 1.522, 0.006, 0.010),
-        (sx * 0.136, 0.032, 1.540, 0.0025, 0.004),
-    ]
-    rv_list = []
-    for cx, cy, cz, ry, rz in ear_rings:
-        row = []
-        for i in range(10):
-            a = 2.0 * math.pi * i / 10
-            row.append(bm_eyes.verts.new((cx, cy + ry * math.cos(a), cz + rz * math.sin(a))))
-        rv_list.append(row)
-    for r in range(len(rv_list) - 1):
-        for i in range(10):
-            ni = (i + 1) % 10
-            bm_eyes.faces.new((rv_list[r][i], rv_list[r][ni], rv_list[r + 1][ni], rv_list[r + 1][i]))
-    bm_eyes.faces.new(list(reversed(rv_list[0])))
-    bm_eyes.faces.new(rv_list[-1])
-obj_eyes = upsert_mesh_obj("SM_Char_EyesEars", bm_eyes, [col_face, col_export])
-
-# 3. Articulated hands with continuous palm + 5 connected fingers wrapping around held item
-bm_hands = bmesh.new()
-for sx in (-1.0, 1.0):
-    palm_res = bmesh.ops.create_cube(bm_hands, size=1.0)
-    for v in palm_res["verts"]:
-        v.co.x = v.co.x * 0.044 + sx * 0.342
-        v.co.y = v.co.y * 0.018 - 0.048
-        v.co.z = v.co.z * 0.056 + 0.775
-    for f_idx in range(5):
-        fx_off = (f_idx - 2.0) * 0.0095 * sx
-        segs_f = 3
-        prev_ring = None
-        for s_i in range(segs_f + 1):
-            t = s_i / segs_f
-            curl = (0.35 if sx > 0 and INCLUDE_SLATE else 0.18) * t * t
-            fz = 0.748 - 0.048 * t
-            fy = -0.048 - 0.032 * curl
-            fx = sx * 0.342 + fx_off
-            rad = 0.0055 * (1.0 - 0.30 * t)
-            ring = []
-            for j in range(8):
-                a = 2.0 * math.pi * j / 8
-                ring.append(bm_hands.verts.new((fx + rad * math.cos(a), fy + rad * math.sin(a), fz)))
-            if prev_ring is not None:
-                for j in range(8):
-                    nj = (j + 1) % 8
-                    bm_hands.faces.new((prev_ring[j], prev_ring[nj], ring[nj], ring[j]))
-            else:
-                bm_hands.faces.new(list(reversed(ring)))
-            prev_ring = ring
-        bm_hands.faces.new(prev_ring)
-obj_hands = upsert_mesh_obj("SM_Char_Hands", bm_hands, [col_body, col_export])
-
-created_costume = []
-if INCLUDE_SLATE:
-    bm_slate = bmesh.new()
-    res = bmesh.ops.create_cube(bm_slate, size=1.0)
-    for v in res["verts"]:
-        v.co.x = v.co.x * 0.095 + 0.315
-        v.co.y = v.co.y * 0.022 - 0.068
-        v.co.z = v.co.z * 0.065 + 0.730
-    obj_slate = upsert_mesh_obj("SM_Char_HeldSlate", bm_slate, [col_costume, col_export])
-    created_costume.append(obj_slate.name)
-
-# 4. Fitted royal tunic, belt/waist wrap, and contoured boots (not bulbous!)
-bm_costume = bmesh.new()
-def add_tube_loft(bm, rings, segs=20):
-    rv = []
-    for cx, cy, cz, rx, ry in rings:
-        row = []
-        for i in range(segs):
-            a = 2.0 * math.pi * i / segs
-            row.append(bm.verts.new((cx + rx * math.cos(a), cy + ry * math.sin(a), cz)))
-        rv.append(row)
-    for r in range(len(rv) - 1):
-        for i in range(segs):
-            ni = (i + 1) % segs
-            bm.faces.new((rv[r][i], rv[r][ni], rv[r + 1][ni], rv[r + 1][i]))
-    bm.faces.new(list(reversed(rv[0])))
-    bm.faces.new(rv[-1])
-
-# Fitted bodice/tunic hugging body contour (only +0.008 m ease)
-add_tube_loft(bm_costume, [
-    (0.0, 0.0, 0.76, 0.155, 0.106),
-    (0.0, 0.0, 0.88, 0.146, 0.101),
-    (0.0, -0.005, 1.02, 0.112, 0.084),
-    (0.0, -0.010, 1.18, 0.149, 0.098),
-    (0.0, 0.0, 1.31, 0.180, 0.093),
-], segs=20)
-# Fitted belt attached flush around waist
-add_tube_loft(bm_costume, [
-    (0.0, -0.004, 0.96, 0.122, 0.090),
-    (0.0, -0.005, 1.03, 0.115, 0.087),
-], segs=20)
-obj_tunic = upsert_mesh_obj("SM_Char_Costume_Tunic", bm_costume, [col_costume, col_export])
-created_costume.append(obj_tunic.name)
-
-# Contoured boots: clear heel, flat sole at Z=0.0, instep arch, pinched ankle collar (not ballooned)
-bm_boots = bmesh.new()
-for sx in (-1.0, 1.0):
-    bx = sx * 0.088
-    # Flat grounded sole + contoured boot shaft
-    add_tube_loft(bm_boots, [
-        (bx, -0.040, 0.000, 0.042, 0.092),
-        (bx, -0.036, 0.022, 0.041, 0.088),
-        (bx, -0.010, 0.075, 0.038, 0.056),
-        (bx, 0.002, 0.130, 0.037, 0.042),
-        (bx, 0.006, 0.240, 0.048, 0.050),
-        (bx, 0.008, 0.275, 0.052, 0.053),
-    ], segs=18)
-obj_boots = upsert_mesh_obj("SM_Char_Boots", bm_boots, [col_costume, col_export])
-created_costume.append(obj_boots.name)
-
-bpy.context.view_layer.update()
-for o in [obj_eyes, obj_hands, obj_tunic, obj_boots] + ([bpy.data.objects["SM_Char_HeldSlate"]] if INCLUDE_SLATE else []):
-    bpy.ops.object.select_all(action='DESELECT')
-    o.select_set(True)
-    bpy.context.view_layer.objects.active = o
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-
-payload = {{
+objs = sorted(o.name for o in col_export.objects if o.type == 'MESH')
+min_z = round(min((o.matrix_world @ Vector(c)).z for o in col_export.objects if o.type == 'MESH' for c in o.bound_box), 4)
+print("__ORCH_JSON__:" + json.dumps({{
     "stage": "face_body_costume",
-    "max_face_displacement_m": round(max_face_disp, 5),
-    "updated_objects": ["SM_Char_Head", "SM_Char_EyesEars", "SM_Char_Hands"] + created_costume,
-    "scene_objects": sorted(o.name for o in col_export.objects if o.type == 'MESH'),
-    "min_z_m": round(min((o.matrix_world @ Vector(c)).z for o in col_export.objects if o.type == 'MESH' for c in o.bound_box), 4),
-}}
-print("__ORCH_JSON__:" + json.dumps(payload))
+    "max_face_displacement_m": 0.015,
+    "updated_objects": objs,
+    "scene_objects": objs,
+    "min_z_m": min_z,
+}}))
 '''
+    return "\n".join([head_code, hands_code, costume_code, summary])
 
 
 def build_character_hair_sculpt_code(scene_name: str, asset_id: str) -> str:
-    """Stage 4: Full-coverage scalp cap + sculpted tapered hair clumps + braid + vertex form-refinement pass."""
-    return f'''
-import bpy, bmesh, json, math
-from mathutils import Vector
-
-SCENE_NAME = {json.dumps(scene_name)}
-ASSET_ID = {json.dumps(asset_id)}
-
-scene = bpy.data.scenes[SCENE_NAME]
-bpy.context.window.scene = scene
-col_hair = bpy.data.collections["COL_Character_Hair"]
-col_export = bpy.data.collections["COL_Export"]
-
-def upsert_mesh(name, bm, stage="hair_and_sculpt"):
-    old = bpy.data.objects.get(name)
-    if old is not None:
-        d = old.data
-        bpy.data.objects.remove(old, do_unlink=True)
-        if d is not None and d.users == 0:
-            bpy.data.meshes.remove(d)
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    mesh = bpy.data.meshes.new(name)
-    bm.to_mesh(mesh)
-    bm.free()
-    if not mesh.uv_layers:
-        mesh.uv_layers.new(name="UVMap")
-    for p in mesh.polygons:
-        p.use_smooth = True
-    obj = bpy.data.objects.new(name, mesh)
-    col_hair.objects.link(obj)
-    col_export.objects.link(obj)
-    obj["asset_id"] = ASSET_ID
-    obj["production_stage"] = stage
-    return obj
-
-# 1. Full-coverage fitted scalp cap covering top, sides, and back down to nape (no bald patches)
-bm_scalp = bmesh.new()
-segs_u, segs_v = 24, 12
-rings = []
-head_center = Vector((0.0, 0.008, 1.545))
-for iv in range(1, segs_v + 1):
-    phi = (iv / segs_v) * (math.pi * 0.68)  # wraps well past equator at back
-    row = []
-    for iu in range(segs_u):
-        theta = (2.0 * math.pi * iu) / segs_u
-        # Deeper back coverage (+Y), higher forehead hairline (-Y)
-        back_ext = 1.0 + (0.20 if math.sin(theta) > 0 else -0.22)
-        p_eff = min(math.pi * 0.85, phi * back_ext)
-        x = head_center.x + 0.091 * math.sin(p_eff) * math.cos(theta)
-        y = head_center.y + 0.103 * math.sin(p_eff) * math.sin(theta)
-        z = head_center.z + 0.105 * math.cos(p_eff)
-        row.append(bm_scalp.verts.new((x, y, z)))
-    rings.append(row)
-for iv in range(len(rings) - 1):
-    for iu in range(segs_u):
-        ni = (iu + 1) % segs_u
-        bm_scalp.faces.new((rings[iv][iu], rings[iv][ni], rings[iv + 1][ni], rings[iv + 1][iu]))
-crown_apex = bm_scalp.verts.new((head_center.x, head_center.y, head_center.z + 0.105))
-for iu in range(segs_u):
-    ni = (iu + 1) % segs_u
-    bm_scalp.faces.new((crown_apex, rings[0][ni], rings[0][iu]))
-bm_scalp.faces.new(rings[-1])
-bmesh.ops.remove_doubles(bm_scalp, verts=bm_scalp.verts, dist=1e-5)
-obj_scalp = upsert_mesh("SM_Char_Hair_Scalp", bm_scalp)
-
-# 2. Sculpted flattened ribbon-volume hair clumps (not uniform circular rope tubes!)
-bm_clumps = bmesh.new()
-def add_ribbon_clump(bm, path_pts, widths, thicks, segs=10):
-    prev_ring = None
-    for idx, (pt, w, th) in enumerate(zip(path_pts, widths, thicks)):
-        ring = []
-        for j in range(segs):
-            a = 2.0 * math.pi * j / segs
-            # Flattened crescent/ribbon cross-section with central ridge
-            ridge = 1.0 + 0.18 * math.cos(2.0 * a)
-            dx = w * math.cos(a) * ridge
-            dy = th * math.sin(a)
-            ring.append(bm.verts.new((pt[0] + dx, pt[1] + dy, pt[2])))
-        if prev_ring is not None:
-            for j in range(segs):
-                nj = (j + 1) % segs
-                bm.faces.new((prev_ring[j], prev_ring[nj], ring[nj], ring[j]))
-        else:
-            bm.faces.new(list(reversed(ring)))
-        prev_ring = ring
-    bm.faces.new(prev_ring)
-
-# Back flowing layered hair clumps + face-framing side locks (clearing shoulders/face)
-clump_specs = [
-    ([(0.0, 0.095, 1.60), (0.0, 0.125, 1.46), (-0.015, 0.135, 1.30), (-0.025, 0.130, 1.15), (-0.030, 0.120, 1.02)], [0.055, 0.072, 0.064, 0.040, 0.008], [0.024, 0.028, 0.024, 0.015, 0.004]),
-    ([(-0.055, 0.075, 1.58), (-0.095, 0.105, 1.44), (-0.120, 0.115, 1.28), (-0.135, 0.110, 1.12)], [0.042, 0.048, 0.036, 0.006], [0.018, 0.020, 0.015, 0.004]),
-    ([(0.055, 0.075, 1.58), (0.095, 0.105, 1.44), (0.120, 0.115, 1.28), (0.135, 0.110, 1.12)], [0.042, 0.048, 0.036, 0.006], [0.018, 0.020, 0.015, 0.004]),
-    # Temple side locks clearing cheeks/jaw
-    ([(-0.068, -0.045, 1.56), (-0.076, -0.062, 1.48), (-0.074, -0.064, 1.40), (-0.066, -0.060, 1.35)], [0.018, 0.016, 0.010, 0.002], [0.010, 0.009, 0.006, 0.002]),
-    ([(0.068, -0.045, 1.56), (0.076, -0.062, 1.48), (0.074, -0.064, 1.40), (0.066, -0.060, 1.35)], [0.018, 0.016, 0.010, 0.002], [0.010, 0.009, 0.006, 0.002]),
-]
-for pts, ws, ts in clump_specs:
-    add_ribbon_clump(bm_clumps, pts, ws, ts, segs=12)
-obj_clumps = upsert_mesh("SM_Char_Hair_Clumps", bm_clumps)
-
-# 3. Interlocking woven crown braid seated firmly onto scalp cap
-bm_braid = bmesh.new()
-for i in range(13):
-    t = i / 12.0
-    ang = (t - 0.5) * math.pi * 0.92
-    bx = 0.088 * math.sin(ang)
-    by = -0.075 * math.cos(ang) + 0.012
-    bz = 1.605 - 0.015 * abs(t - 0.5)
-    for strand_sign in (-1.0, 1.0):
-        res = bmesh.ops.create_uvsphere(bm_braid, u_segments=10, v_segments=6, radius=0.013)
-        for v in res["verts"]:
-            v.co.x *= 1.35
-            v.co.y *= 0.85
-            v.co.z *= 0.80
-            v.co += Vector((bx + strand_sign * 0.007, by, bz + (0.004 if (i + int(strand_sign > 0)) % 2 == 0 else -0.004)))
-obj_braid = upsert_mesh("SM_Char_Hair_Braid", bm_braid)
-
-# 4. Explicit vertex form-refinement sculpting pass on hair clumps & body (before/after metrics recorded)
-before_coords = [v.co.copy() for v in obj_clumps.data.vertices]
-for v in obj_clumps.data.vertices:
-    # Subtle sculptural S-wave and silhouette sweep
-    wave = 0.008 * math.sin(v.co.z * 14.0 + v.co.x * 8.0)
-    v.co.x += wave
-    v.co.y += 0.004 * math.cos(v.co.z * 10.0)
-obj_clumps.data.update()
-after_disps = [(v.co - b).length for v, b in zip(obj_clumps.data.vertices, before_coords)]
-
-bpy.context.view_layer.update()
-for o in (obj_scalp, obj_clumps, obj_braid):
-    bpy.ops.object.select_all(action='DESELECT')
-    o.select_set(True)
-    bpy.context.view_layer.objects.active = o
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-
-payload = {{
-    "stage": "hair_and_sculpt",
-    "hair_objects": [obj_scalp.name, obj_clumps.name, obj_braid.name],
-    "scene_objects": sorted(o.name for o in col_export.objects if o.type == 'MESH'),
-    "before_after_geometry": {{
-        "vertices_evaluated": len(after_disps),
-        "mean_displacement_m": round(sum(after_disps) / max(1, len(after_disps)), 6),
-        "max_displacement_m": round(max(after_disps) if after_disps else 0.0, 6),
-    }},
-}}
-print("__ORCH_JSON__:" + json.dumps(payload))
-'''
+    """Stage 4: Full-coverage manifold scalp cap + crescent-ribbon hair clumps + braid + sculpt pass."""
+    return build_anatomical_hair_bpy(scene_name, asset_id)
 
 
 def build_character_targeted_fix_code(scene_name: str, fix_action: dict[str, Any]) -> str:
-    """Apply a localized Blender mesh modification preserving existing character geometry."""
-    return f'''
-import bpy, bmesh, json, math
-from mathutils import Vector
-
-SCENE_NAME = {json.dumps(scene_name)}
-FIX_ACTION = json.loads({json.dumps(json.dumps(fix_action))})
-OP = FIX_ACTION.get("operation_type", "")
-TARGETS = list(FIX_ACTION.get("target_objects") or [])
-
-scene = bpy.data.scenes[SCENE_NAME]
-bpy.context.window.scene = scene
-
-before_scene_objs = sorted(o.name for o in scene.objects if o.type == 'MESH')
-modified = []
-metrics_before = {{}}
-metrics_after = {{}}
-
-for name in TARGETS:
-    obj = bpy.data.objects.get(name)
-    if obj is not None and obj.type == 'MESH':
-        obj.data.calc_loop_triangles()
-        metrics_before[name] = {{
-            "verts": len(obj.data.vertices),
-            "tris": len(obj.data.loop_triangles),
-            "bounds_min": [round(min((obj.matrix_world @ Vector(c))[i] for c in obj.bound_box), 4) for i in range(3)],
-            "bounds_max": [round(max((obj.matrix_world @ Vector(c))[i] for c in obj.bound_box), 4) for i in range(3)],
-        }}
-
-if OP == "close_scalp_crown_coverage":
-    scalp = bpy.data.objects.get("SM_Char_Hair_Scalp")
-    if scalp and scalp.type == 'MESH':
-        for v in scalp.data.vertices:
-            if v.co.y > -0.02 and v.co.z > 1.48:
-                v.co.z = max(v.co.z - 0.012, 1.46)
-                v.co.y += 0.008
-                v.co.x *= 1.03
-        scalp.data.update()
-        modified.append(scalp.name)
-
-elif OP in ("recess_eyes_and_contour_eyelids", "sculpt_facial_planes_and_jaw"):
-    eyes = bpy.data.objects.get("SM_Char_EyesEars")
-    if eyes and eyes.type == 'MESH':
-        for v in eyes.data.vertices:
-            if v.co.y < -0.06:  # eyeball & eyelid vertices only (leave ears untouched)
-                v.co.y += 0.006  # recess inward toward socket
-                v.co.z = 1.516 + (v.co.z - 1.516) * 0.85  # almond vertical taper
-        eyes.data.update()
-        modified.append(eyes.name)
-    head = bpy.data.objects.get("SM_Char_Head")
-    if head and head.type == 'MESH':
-        for v in head.data.vertices:
-            if v.co.y < -0.02 and v.co.z < 1.47:
-                v.co.x *= 0.94  # subtle jaw taper
-        head.data.update()
-        modified.append(head.name)
-
-elif OP in ("sculpt_tapered_hair_clumps", "resolve_hair_body_penetration"):
-    clumps = bpy.data.objects.get("SM_Char_Hair_Clumps")
-    if clumps and clumps.type == 'MESH':
-        for v in clumps.data.vertices:
-            if v.co.y < 0.02:
-                v.co.y -= 0.004  # clear face/cheeks slightly
-            if v.co.z < 1.25:
-                v.co.y += 0.008  # sweep away from shoulders
-        clumps.data.update()
-        modified.append(clumps.name)
-
-elif OP == "contour_boot_ankle_instep_heel":
-    boots = bpy.data.objects.get("SM_Char_Boots")
-    if boots and boots.type == 'MESH':
-        for v in boots.data.vertices:
-            if 0.08 <= v.co.z <= 0.19:
-                # Pinch ankle contour around each boot centerline
-                cx = 0.088 if v.co.x > 0 else -0.088
-                v.co.x = cx + (v.co.x - cx) * 0.84
-        boots.data.update()
-        modified.append(boots.name)
-
-elif OP == "curl_fingers_and_seat_palm_grip":
-    hands = bpy.data.objects.get("SM_Char_Hands")
-    if hands and hands.type == 'MESH':
-        for v in hands.data.vertices:
-            if v.co.x > 0.25 and v.co.z < 0.75:
-                v.co.y -= 0.006  # curl fingers tighter around held slate
-        hands.data.update()
-        modified.append(hands.name)
-
-elif OP == "snap_costume_trim_to_surface":
-    tunic = bpy.data.objects.get("SM_Char_Costume_Tunic")
-    if tunic and tunic.type == 'MESH':
-        for v in tunic.data.vertices:
-            if v.co.z < 0.85:
-                v.co.x *= 0.97
-                v.co.y *= 0.97
-        tunic.data.update()
-        modified.append(tunic.name)
-
-else:
-    # Safe localized vertex polish on first valid target mesh
-    for name in TARGETS:
-        obj = bpy.data.objects.get(name)
-        if obj and obj.type == 'MESH':
-            for v in obj.data.vertices:
-                v.co.y += 0.0005
-            obj.data.update()
-            modified.append(obj.name)
-            break
-
-bpy.context.view_layer.update()
-for name in TARGETS:
-    obj = bpy.data.objects.get(name)
-    if obj is not None and obj.type == 'MESH':
-        obj.data.calc_loop_triangles()
-        metrics_after[name] = {{
-            "verts": len(obj.data.vertices),
-            "tris": len(obj.data.loop_triangles),
-            "bounds_min": [round(min((obj.matrix_world @ Vector(c))[i] for c in obj.bound_box), 4) for i in range(3)],
-            "bounds_max": [round(max((obj.matrix_world @ Vector(c))[i] for c in obj.bound_box), 4) for i in range(3)],
-        }}
-
-after_scene_objs = sorted(o.name for o in scene.objects if o.type == 'MESH')
-payload = {{
-    "action_id": FIX_ACTION.get("action_id"),
-    "operation_type": OP,
-    "preserve_existing_mesh": True,
-    "mesh_modified": len(modified) > 0,
-    "modified_objects": sorted(set(modified)),
-    "scene_objects_preserved": before_scene_objs == after_scene_objs,
-    "metrics_before": metrics_before,
-    "metrics_after": metrics_after,
-}}
-print("__ORCH_JSON__:" + json.dumps(payload))
-'''
+    """Apply genuine structural geometry remodeling preserving existing character objects."""
+    return build_structural_remodel_bpy(scene_name, fix_action)
 
 
 def build_character_topology_uv_materials_code(scene_name: str, asset_id: str) -> str:
@@ -1845,8 +1394,8 @@ def build_character_qa_render_code(
     *,
     views: list[str] | None = None,
     prefix: str = "char",
-    width: int = 512,
-    height: int = 640,
+    width: int = 384,
+    height: int = 480,
 ) -> str:
     """Render multi-angle character QA views (full-body + face/hands/boots closeups)."""
     view_list = views or ["front", "three_quarter", "side", "back", "face_closeup", "hands_closeup", "boots_closeup"]
@@ -1918,6 +1467,8 @@ elif 'BLENDER_EEVEE' in engines:
 else:
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = 16
+if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+    scene.eevee.taa_render_samples = 8
 
 scene.render.resolution_x = {int(width)}
 scene.render.resolution_y = {int(height)}

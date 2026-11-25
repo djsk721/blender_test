@@ -606,39 +606,68 @@ def run_harness_live_blender(
     return summary
 
 
-def check_live_agent_readiness(*, model_name: str = "live_agent_check", output_base: Path | None = None) -> dict[str, Any]:
-    """Check whether live OpenCode CLI + independent vision subagent can run in this environment."""
+def run_live_agent(
+    *,
+    model_id: str = "openai/gpt-6.2-sol",
+    reviewer_model_id: str = "openai/gpt-6.2-sol",
+    reference_mode: str = "TEXT_ONLY",
+    reference_image: Path | None = None,
+    animation_mode: str = "animated",
+    stage_timeout_sec: int = 180,
+    output_base: Path | None = None,
+) -> dict[str, Any]:
+    """Execute the real OpenCode CLI + Blender MCP + IndependentMultimodalReviewer 11-stage pipeline."""
+    from blender_orchestration.opencode_runner import OpenCodeCharacterRunner
+
     opencode_bin = shutil.which("opencode")
     skills_check = bp.validate_required_skills(PROJECT_ROOT / ".opencode" / "skills")
     base = output_base or (PROJECT_ROOT / "e2e_runs" / "character_e2e")
-    ws = bp.create_isolated_benchmark_workspace(base, model_name)
+    safe_model = model_id.replace("/", "_")
+    ws = bp.create_isolated_benchmark_workspace(base, safe_model)
+    run_dir = Path(ws["run_dir"])
+    runtime_dir = Path(ws["runtime_dir"])
 
     if not opencode_bin:
         return {
             "mode": "live-agent",
-            "run_dir": ws["run_dir"],
+            "run_dir": str(run_dir),
             "status": "BLOCKED",
             "reason": "opencode CLI binary not found on PATH.",
             "skills_preflight": skills_check,
         }
 
-    # Live multi-agent vision inspection requires an interactive/configured LLM provider;
-    # never fabricate PASS when unexecuted.
-    return {
-        "mode": "live-agent",
-        "run_dir": ws["run_dir"],
-        "opencode_bin": opencode_bin,
-        "skills_preflight": skills_check,
-        "verdicts": {
-            "mcp_connection": "NOT_VERIFIED",
-            "blender_execution": "NOT_VERIFIED",
-            "skill_application": "NOT_VERIFIED",
-            "geometry_and_technical_validation": "NOT_VERIFIED",
-            "visual_quality_validation": "NOT_VERIFIED",
-            "final_asset_production": "NOT_VERIFIED",
-        },
-        "reason": "Live LLM OpenCode agent invocation requires external LLM provider credentials/session; run via OpenCode with independent subagent visual QA.",
-    }
+    if reference_mode == "REFERENCE_GUIDED":
+        prompt = (
+            "Create an animated stylized Princess Zelda 3D character for Godot using the supplied "
+            "approved reference image, following blender-director, 3D anatomical modeling, and independent visual QA."
+        )
+        ref_path = reference_image if (reference_image and reference_image.is_file()) else (PROJECT_ROOT / "images.jpg")
+    else:
+        prompt = (
+            "Create a stylized Princess Zelda 3D character with a clean run cycle animation for Godot "
+            "without using any reference images."
+        )
+        ref_path = None
+
+    runner = OpenCodeCharacterRunner(
+        model_id=model_id,
+        reviewer_model_id=reviewer_model_id,
+        project_root=PROJECT_ROOT,
+        stage_timeout_sec=stage_timeout_sec,
+        mcp_env_overrides=_env_for_isolated_run(runtime_dir),
+    )
+    res = runner.run(
+        prompt=prompt,
+        run_dir=run_dir,
+        reference_mode=reference_mode,
+        approved_reference_path=ref_path,
+        animation_mode=animation_mode,
+        asset_name="HeroineCharacter",
+    )
+    cleanup = wait_for_watchdog_cleanup(runtime_dir, timeout_sec=25.0)
+    res["mode"] = "live-agent"
+    res["watchdog_cleanup"] = cleanup
+    return res
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -646,12 +675,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=["harness-live-blender", "live-agent"], default="harness-live-blender")
     parser.add_argument("--reference-mode", choices=["TEXT_ONLY", "REFERENCE_GUIDED"], default="TEXT_ONLY")
     parser.add_argument("--model-name", default="harness_character")
+    parser.add_argument("--model", default="openai/gpt-6.2-sol", help="OpenCode provider/model for live-agent mode.")
+    parser.add_argument("--reviewer-model", default="openai/gpt-6.2-sol", help="Independent multimodal reviewer model.")
+    parser.add_argument("--reference-image", type=Path, default=None)
+    parser.add_argument("--stage-timeout", type=int, default=180)
     parser.add_argument("--output-base", type=Path, default=None)
     parser.add_argument("--demo-rig-anim-technical", action="store_true", help="Also verify rigging/animation/GLB technical stages in Blender while keeping visual approval NOT_VERIFIED.")
     args = parser.parse_args(argv)
 
     if args.mode == "live-agent":
-        res = check_live_agent_readiness(model_name=args.model_name, output_base=args.output_base)
+        res = run_live_agent(
+            model_id=args.model,
+            reviewer_model_id=args.reviewer_model,
+            reference_mode=args.reference_mode,
+            reference_image=args.reference_image,
+            stage_timeout_sec=args.stage_timeout,
+            output_base=args.output_base,
+        )
     else:
         res = run_harness_live_blender(
             reference_mode=args.reference_mode,

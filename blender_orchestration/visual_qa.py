@@ -11,6 +11,11 @@ import time
 from typing import Any, Callable
 
 from .qa_profiles import QAProfile
+from .repair_strategies import (
+    RepairStrategyTier,
+    select_strategy_for_defect,
+    validate_repair_effectiveness,
+)
 
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -116,6 +121,7 @@ class RepairLoopPolicy:
     max_wall_time_sec: float = 1800.0
     min_reference_match_ratio: float = 0.8
     forbid_stalled_repeat: bool = True
+    escalate_strategy_on_repeat: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -343,13 +349,18 @@ _DEFECT_TO_FIX_SPEC: dict[str, dict[str, Any]] = {
 }
 
 
-def plan_blender_fixes_for_defects(defects: list[VisualDefect | dict[str, Any]]) -> list[BlenderFixAction]:
+def plan_blender_fixes_for_defects(
+    defects: list[VisualDefect | dict[str, Any]],
+    *,
+    attempt_index: int = 0,
+) -> list[BlenderFixAction]:
     """Map open visual/technical defects onto localized BlenderFixAction objects."""
     actions: list[BlenderFixAction] = []
     for idx, raw in enumerate(defects, start=1):
         d = raw if isinstance(raw, VisualDefect) else VisualDefect(**raw)
         if d.resolved or d.severity == "NOTE":
             continue
+        tier = select_strategy_for_defect(d.defect_type, attempt_index=attempt_index)
         spec = _DEFECT_TO_FIX_SPEC.get(
             d.defect_type,
             {
@@ -360,16 +371,21 @@ def plan_blender_fixes_for_defects(defects: list[VisualDefect | dict[str, Any]])
                 "expected_delta": d.required_fix_action or "Resolve visual defect.",
             },
         )
+        op_type = str(spec["operation_type"])
+        if tier == RepairStrategyTier.ROLLBACK_TO_BLOCKOUT and attempt_index > 0:
+            op_type = f"rollback_and_reblock_{op_type}"
         targets = list(d.affected_objects) if d.affected_objects else list(spec["default_targets"])
+        params = dict(spec["parameters"])
+        params["strategy_tier"] = tier
         actions.append(
             BlenderFixAction(
                 action_id=f"FIX-{idx:03d}-{d.defect_id}",
                 defect_id=d.defect_id,
                 defect_type=d.defect_type,
                 target_objects=targets,
-                operation_type=str(spec["operation_type"]),
-                preserve_existing_mesh=True,
-                parameters=dict(spec["parameters"]),
+                operation_type=op_type,
+                preserve_existing_mesh=(tier != RepairStrategyTier.ROLLBACK_TO_BLOCKOUT),
+                parameters=params,
                 verification_views=list(spec["verification_views"]),
                 expected_delta=str(spec["expected_delta"]),
             )
@@ -453,6 +469,8 @@ class VisualQARepairLoop:
         seen_stalled_signatures: set[tuple[str, ...]] = set()
         last_evidence: dict[str, Any] | None = None
         last_renders: dict[str, Any] | None = None
+        best_checkpoint: dict[str, Any] | None = None
+        best_rank: tuple[int, int] | None = None
 
         views = list(self.profile.required_views)
         pass_index = 0
@@ -468,6 +486,7 @@ class VisualQARepairLoop:
                     "rerender_count": rerender_count,
                     "iterations": iterations,
                     "before_after_comparisons": before_after_comparisons,
+                    "best_checkpoint": best_checkpoint,
                     "unresolved_defects": list((last_evidence or {}).get("defects") or []),
                     "reasons": [f"Visual QA loop exceeded max_wall_time_sec ({self.policy.max_wall_time_sec}s)."],
                 }
@@ -490,12 +509,34 @@ class VisualQARepairLoop:
                     "rerender_count": rerender_count,
                     "iterations": iterations,
                     "before_after_comparisons": before_after_comparisons,
+                    "best_checkpoint": best_checkpoint,
                     "unresolved_defects": [],
                     "reasons": ev_check["reasons"],
                 }
 
             evidence_dict = _coerce_evidence_dict(raw_evidence)  # type: ignore[arg-type]
             approved, gate_reasons = _review_meets_approval(evidence_dict, self.profile, self.policy)
+
+            open_blocking_count = sum(
+                1
+                for d in (evidence_dict.get("defects") or [])
+                if not d.get("resolved") and d.get("severity") in ("BLOCKER", "MAJOR")
+            )
+            pass_criteria_count = sum(
+                1 for v in (evidence_dict.get("criteria_verdicts") or {}).values() if v == "PASS"
+            )
+            curr_rank = (-open_blocking_count, pass_criteria_count)
+            if best_rank is None or curr_rank > best_rank:
+                best_rank = curr_rank
+                best_checkpoint = {
+                    "pass_index": pass_index,
+                    "fix_iteration": fix_iteration_count,
+                    "renders": render_bundle.get("renders") or render_bundle,
+                    "open_blocking_defects": open_blocking_count,
+                    "pass_criteria_count": pass_criteria_count,
+                    "target_asset_path": evidence_dict.get("target_asset_path"),
+                    "defects": list(evidence_dict.get("defects") or []),
+                }
 
             if last_evidence is not None and last_renders is not None:
                 prev_open = [
@@ -528,6 +569,7 @@ class VisualQARepairLoop:
                 "image_observations": list(evidence_dict.get("image_observations") or []),
                 "fix_actions": [],
                 "fix_result": None,
+                "strategy_validation": None,
             }
 
             if approved:
@@ -540,6 +582,7 @@ class VisualQARepairLoop:
                     "rerender_count": rerender_count,
                     "iterations": iterations,
                     "before_after_comparisons": before_after_comparisons,
+                    "best_checkpoint": best_checkpoint,
                     "final_evidence": evidence_dict,
                     "unresolved_defects": [
                         d for d in (evidence_dict.get("defects") or []) if not d.get("resolved")
@@ -558,6 +601,7 @@ class VisualQARepairLoop:
                     "rerender_count": rerender_count,
                     "iterations": iterations,
                     "before_after_comparisons": before_after_comparisons,
+                    "best_checkpoint": best_checkpoint,
                     "final_evidence": evidence_dict,
                     "unresolved_defects": [
                         d for d in (evidence_dict.get("defects") or []) if not d.get("resolved")
@@ -571,7 +615,8 @@ class VisualQARepairLoop:
                 d if isinstance(d, VisualDefect) else VisualDefect(**d)
                 for d in (evidence_dict.get("defects") or [])
             ]
-            fix_actions = plan_blender_fixes_for_defects(defects_objs)
+            attempt_for_escalation = fix_iteration_count if self.policy.escalate_strategy_on_repeat else 0
+            fix_actions = plan_blender_fixes_for_defects(defects_objs, attempt_index=attempt_for_escalation)
             if not fix_actions:
                 iterations.append(iter_record)
                 return {
@@ -582,6 +627,7 @@ class VisualQARepairLoop:
                     "rerender_count": rerender_count,
                     "iterations": iterations,
                     "before_after_comparisons": before_after_comparisons,
+                    "best_checkpoint": best_checkpoint,
                     "final_evidence": evidence_dict,
                     "unresolved_defects": [d.to_dict() for d in defects_objs if not d.resolved],
                     "reasons": gate_reasons + ["Criteria failed with no actionable open defects to repair."],
@@ -598,6 +644,7 @@ class VisualQARepairLoop:
                     "rerender_count": rerender_count,
                     "iterations": iterations,
                     "before_after_comparisons": before_after_comparisons,
+                    "best_checkpoint": best_checkpoint,
                     "final_evidence": evidence_dict,
                     "unresolved_defects": [d.to_dict() for d in defects_objs if not d.resolved],
                     "reasons": gate_reasons + [
@@ -608,6 +655,25 @@ class VisualQARepairLoop:
             fix_result = apply_fix_fn(fix_actions, fix_iteration_count + 1) or {}
             mesh_modified = bool(fix_result.get("mesh_modified", True))
             if mesh_modified:
+                strat_val = validate_repair_effectiveness(fix_actions, fix_result)
+                iter_record["strategy_validation"] = strat_val.to_dict()
+                if not strat_val.effective:
+                    iter_record["fix_actions"] = [a.to_dict() for a in fix_actions]
+                    iter_record["fix_result"] = fix_result
+                    iterations.append(iter_record)
+                    return {
+                        "status": "FAIL",
+                        "profile_id": self.profile.profile_id,
+                        "policy_digest": self.policy_digest,
+                        "fix_iteration_count": fix_iteration_count,
+                        "rerender_count": rerender_count,
+                        "iterations": iterations,
+                        "before_after_comparisons": before_after_comparisons,
+                        "best_checkpoint": best_checkpoint,
+                        "final_evidence": evidence_dict,
+                        "unresolved_defects": [d.to_dict() for d in defects_objs if not d.resolved],
+                        "reasons": gate_reasons + [str(strat_val.failure_reason)],
+                    }
                 fix_iteration_count += 1
                 consecutive_noop_rerenders = 0
                 seen_stalled_signatures.add(sig)
@@ -623,6 +689,7 @@ class VisualQARepairLoop:
                         "rerender_count": rerender_count,
                         "iterations": iterations,
                         "before_after_comparisons": before_after_comparisons,
+                        "best_checkpoint": best_checkpoint,
                         "final_evidence": evidence_dict,
                         "unresolved_defects": [d.to_dict() for d in defects_objs if not d.resolved],
                         "reasons": gate_reasons + [

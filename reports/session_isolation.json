@@ -1,0 +1,439 @@
+{
+  "gpt_started_at": "2026-11-25T01:10:39.775575+00:00",
+  "gpt_finished_at": "2026-11-25T01:17:21.298204+00:00",
+  "gpt_blender_pid": 82626,
+  "gpt_session_id": "ses_defbe7846ffew6pX3WR1mrZbU2",
+  "gpt_outputs_saved": true,
+  "reset_started_at": "2026-11-25T01:17:21.381198+00:00",
+  "reset_finished_at": "2026-11-25T01:17:41.759426+00:00",
+  "process_state_before_reset": {
+    "blender_pid": 82626,
+    "boot_id": "managed-82626-fe3b146b",
+    "pre_status_state": "STOPPED",
+    "post_gpt_state": "IDLE"
+  },
+  "process_state_after_reset": {
+    "stop_result": {
+      "stopped": true,
+      "deferred": false,
+      "reason": "sequential_benchmark_reset",
+      "cleanup": {
+        "blender_stopped": true,
+        "blender_forced_kill": false,
+        "graceful_quit_used": true,
+        "xvfb_stopped": true,
+        "xvfb_forced_kill": false
+      },
+      "gpu_released": {
+        "released": true,
+        "remaining_mib": 0,
+        "matched_apps": [],
+        "snapshot": {
+          "timestamp": 1795569443.6928778,
+          "nvidia_smi_available": true,
+          "gpus": [
+            {
+              "index": 1,
+              "name": "NVIDIA GeForce RTX 3090",
+              "uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+              "driver_version": "595.91.07",
+              "pci_bus_id": "00000000:68:00.0",
+              "memory_total_mib": 24576,
+              "memory_used_mib": 865,
+              "memory_free_mib": 23261,
+              "utilization_gpu_pct": 0,
+              "utilization_memory_pct": 7,
+              "temperature_c": 50,
+              "pstate": "P8",
+              "healthy": true,
+              "health_issues": []
+            }
+          ],
+          "apps": [
+            {
+              "pid": 75838,
+              "process_name": "blender",
+              "used_memory_mib": 823,
+              "gpu_uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+              "gpu_index": 1,
+              "type": "C+G"
+            }
+          ],
+          "health": {
+            "status": "unhealthy",
+            "reasons": [
+              "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+              "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+            ],
+            "proc_nvidia_gpu_count": 2,
+            "reported_gpu_count": 1,
+            "healthy_gpu_count": 1
+          }
+        }
+      },
+      "session_backup": null
+    },
+    "post_stop_status": {
+      "state": "STOPPED",
+      "ownership": "none",
+      "managed": false,
+      "boot_id": null,
+      "blender_alive": false,
+      "blender_pid": null,
+      "xvfb_alive": false,
+      "xvfb_pid": null,
+      "display": null,
+      "external_pid": null,
+      "addon_reachable": false,
+      "addon_info": null,
+      "active_jobs": [],
+      "pending_jobs": [],
+      "work_lock_held": false,
+      "idle_elapsed_sec": 0.0,
+      "idle_timeout_sec": 600.0,
+      "startup_duration_sec": 17.174,
+      "gpu_effective_device": "CPU",
+      "gpu_selected_index": null,
+      "gpu_warnings": [
+        "GPU health check reported 'unhealthy' (nvidia-smi output reported driver/NVML error marker: unable to determine the device handle; /proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1.); falling back to CPU + software rendering without disturbing other GPU workloads."
+      ],
+      "gpu_decision": {
+        "timestamp": 1795569040.5395212,
+        "requested_device": "AUTO",
+        "effective_device": "CPU",
+        "effective_backend": "CPU",
+        "selected_gpu_index": null,
+        "selected_gpu_uuid": null,
+        "selected_gpu_free_vram_mib": null,
+        "health_status": "unhealthy",
+        "health_reasons": [
+          "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+          "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+        ],
+        "fallback_triggered": true,
+        "fallback_reason": "GPU health check reported 'unhealthy' (nvidia-smi output reported driver/NVML error marker: unable to determine the device handle; /proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1.); falling back to CPU + software rendering without disturbing other GPU workloads.",
+        "isolation_notes": "CUDA_VISIBLE_DEVICES scopes CUDA/OptiX compute devices only; it does not isolate OpenGL/GLX/EGL or Vulkan device selection on multi-GPU systems unless software rendering environment variables are explicitly applied.",
+        "warnings": [
+          "GPU health check reported 'unhealthy' (nvidia-smi output reported driver/NVML error marker: unable to determine the device handle; /proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1.); falling back to CPU + software rendering without disturbing other GPU workloads."
+        ],
+        "error": null
+      },
+      "gpu_after_start": {
+        "timestamp": 1795569057.7139513,
+        "nvidia_smi_available": true,
+        "matched_apps": [],
+        "total_mib": 0,
+        "gpus": [
+          {
+            "index": 1,
+            "name": "NVIDIA GeForce RTX 3090",
+            "uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+            "driver_version": "595.91.07",
+            "pci_bus_id": "00000000:68:00.0",
+            "memory_total_mib": 24576,
+            "memory_used_mib": 865,
+            "memory_free_mib": 23261,
+            "utilization_gpu_pct": 0,
+            "utilization_memory_pct": 7,
+            "temperature_c": 50,
+            "pstate": "P8",
+            "healthy": true,
+            "health_issues": []
+          }
+        ],
+        "health": {
+          "status": "unhealthy",
+          "reasons": [
+            "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+            "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+          ],
+          "proc_nvidia_gpu_count": 2,
+          "reported_gpu_count": 1,
+          "healthy_gpu_count": 1
+        }
+      },
+      "gpu_after_stop": {
+        "released": true,
+        "remaining_mib": 0,
+        "matched_apps": [],
+        "snapshot": {
+          "timestamp": 1795569443.6928778,
+          "nvidia_smi_available": true,
+          "gpus": [
+            {
+              "index": 1,
+              "name": "NVIDIA GeForce RTX 3090",
+              "uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+              "driver_version": "595.91.07",
+              "pci_bus_id": "00000000:68:00.0",
+              "memory_total_mib": 24576,
+              "memory_used_mib": 865,
+              "memory_free_mib": 23261,
+              "utilization_gpu_pct": 0,
+              "utilization_memory_pct": 7,
+              "temperature_c": 50,
+              "pstate": "P8",
+              "healthy": true,
+              "health_issues": []
+            }
+          ],
+          "apps": [
+            {
+              "pid": 75838,
+              "process_name": "blender",
+              "used_memory_mib": 823,
+              "gpu_uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+              "gpu_index": 1,
+              "type": "C+G"
+            }
+          ],
+          "health": {
+            "status": "unhealthy",
+            "reasons": [
+              "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+              "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+            ],
+            "proc_nvidia_gpu_count": 2,
+            "reported_gpu_count": 1,
+            "healthy_gpu_count": 1
+          }
+        }
+      },
+      "session_backup": null,
+      "session_recovery": null,
+      "last_error": null,
+      "watchdog_running": true,
+      "defunct_children": []
+    },
+    "new_scene_state": {
+      "filepath": "",
+      "file_mtime": null,
+      "is_dirty": false,
+      "jobs": {
+        "RENDER": false,
+        "RENDER_PREVIEW": false,
+        "OBJECT_BAKE": false,
+        "COMPOSITE": false,
+        "SHADER_COMPILATION": false
+      },
+      "is_animation_playing": false,
+      "scene_name": "Scene",
+      "object_count": 3,
+      "object_names": [
+        "Cube",
+        "Light",
+        "Camera"
+      ],
+      "scene_signature": "2c571e8d63cc7dd7f58e41b041ffee053bd07436e98734d7395df42e1ff75dc1"
+    },
+    "residual_objects_found": []
+  },
+  "managed_process_and_xvfb_cleanup": {
+    "managed_blender_stopped": true,
+    "xvfb_cleaned_up": true,
+    "old_pid_terminated": true,
+    "final_cleanup_after_qwen": {
+      "stopped": true,
+      "deferred": false,
+      "reason": "sequential_benchmark_complete",
+      "cleanup": {
+        "blender_stopped": true,
+        "blender_forced_kill": false,
+        "graceful_quit_used": true,
+        "xvfb_stopped": true,
+        "xvfb_forced_kill": false
+      },
+      "gpu_released": {
+        "released": true,
+        "remaining_mib": 0,
+        "matched_apps": [],
+        "snapshot": {
+          "timestamp": 1795570108.0177495,
+          "nvidia_smi_available": true,
+          "gpus": [
+            {
+              "index": 1,
+              "name": "NVIDIA GeForce RTX 3090",
+              "uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+              "driver_version": "595.91.07",
+              "pci_bus_id": "00000000:68:00.0",
+              "memory_total_mib": 24576,
+              "memory_used_mib": 17,
+              "memory_free_mib": 24109,
+              "utilization_gpu_pct": 0,
+              "utilization_memory_pct": 5,
+              "temperature_c": 50,
+              "pstate": "P8",
+              "healthy": true,
+              "health_issues": []
+            }
+          ],
+          "apps": [],
+          "health": {
+            "status": "unhealthy",
+            "reasons": [
+              "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+              "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+            ],
+            "proc_nvidia_gpu_count": 2,
+            "reported_gpu_count": 1,
+            "healthy_gpu_count": 1
+          }
+        }
+      },
+      "session_backup": null
+    }
+  },
+  "gpu_before_reset": {
+    "timestamp": 1795569441.481569,
+    "nvidia_smi_available": true,
+    "gpus": [
+      {
+        "index": 1,
+        "name": "NVIDIA GeForce RTX 3090",
+        "uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+        "driver_version": "595.91.07",
+        "pci_bus_id": "00000000:68:00.0",
+        "memory_total_mib": 24576,
+        "memory_used_mib": 865,
+        "memory_free_mib": 23261,
+        "utilization_gpu_pct": 0,
+        "utilization_memory_pct": 7,
+        "temperature_c": 50,
+        "pstate": "P8",
+        "healthy": true,
+        "health_issues": []
+      }
+    ],
+    "apps": [
+      {
+        "pid": 75838,
+        "process_name": "blender",
+        "used_memory_mib": 823,
+        "gpu_uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+        "gpu_index": 1,
+        "type": "C+G"
+      }
+    ],
+    "health": {
+      "status": "unhealthy",
+      "reasons": [
+        "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+        "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+      ],
+      "proc_nvidia_gpu_count": 2,
+      "reported_gpu_count": 1,
+      "healthy_gpu_count": 1
+    }
+  },
+  "gpu_after_reset": {
+    "timestamp": 1795569444.022835,
+    "nvidia_smi_available": true,
+    "gpus": [
+      {
+        "index": 1,
+        "name": "NVIDIA GeForce RTX 3090",
+        "uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+        "driver_version": "595.91.07",
+        "pci_bus_id": "00000000:68:00.0",
+        "memory_total_mib": 24576,
+        "memory_used_mib": 865,
+        "memory_free_mib": 23261,
+        "utilization_gpu_pct": 0,
+        "utilization_memory_pct": 7,
+        "temperature_c": 50,
+        "pstate": "P8",
+        "healthy": true,
+        "health_issues": []
+      }
+    ],
+    "apps": [
+      {
+        "pid": 75838,
+        "process_name": "blender",
+        "used_memory_mib": 823,
+        "gpu_uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+        "gpu_index": 1,
+        "type": "C+G"
+      }
+    ],
+    "health": {
+      "status": "unhealthy",
+      "reasons": [
+        "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+        "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+      ],
+      "proc_nvidia_gpu_count": 2,
+      "reported_gpu_count": 1,
+      "healthy_gpu_count": 1
+    }
+  },
+  "gpu_released": {
+    "released": true,
+    "remaining_mib": 0,
+    "matched_apps": [],
+    "snapshot": {
+      "timestamp": 1795569443.886569,
+      "nvidia_smi_available": true,
+      "gpus": [
+        {
+          "index": 1,
+          "name": "NVIDIA GeForce RTX 3090",
+          "uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+          "driver_version": "595.91.07",
+          "pci_bus_id": "00000000:68:00.0",
+          "memory_total_mib": 24576,
+          "memory_used_mib": 865,
+          "memory_free_mib": 23261,
+          "utilization_gpu_pct": 0,
+          "utilization_memory_pct": 7,
+          "temperature_c": 50,
+          "pstate": "P8",
+          "healthy": true,
+          "health_issues": []
+        }
+      ],
+      "apps": [
+        {
+          "pid": 75838,
+          "process_name": "blender",
+          "used_memory_mib": 823,
+          "gpu_uuid": "GPU-e114aa9c-b8dc-1d7f-68ef-b9e5abacdbbe",
+          "gpu_index": 1,
+          "type": "C+G"
+        }
+      ],
+      "health": {
+        "status": "unhealthy",
+        "reasons": [
+          "nvidia-smi output reported driver/NVML error marker: unable to determine the device handle",
+          "/proc/driver/nvidia/gpus reports 2 GPU(s), but nvidia-smi only returned 1."
+        ],
+        "proc_nvidia_gpu_count": 2,
+        "reported_gpu_count": 1,
+        "healthy_gpu_count": 1
+      }
+    }
+  },
+  "qwen_blender_pid": 91424,
+  "qwen_session_id": "ses_defb84c4cffeA4z88z3X9WqzTq",
+  "qwen_started_at": "2026-11-25T01:17:41.760055+00:00",
+  "qwen_finished_at": "2026-11-25T01:28:26.197862+00:00",
+  "execution_windows_overlapped": false,
+  "cross_reference_between_models": false,
+  "reset_checks": {
+    "1_prior_outputs_saved": true,
+    "missing_prior_files": [],
+    "2_no_inflight_mcp_jobs": true,
+    "3_memory_datablocks_purged": true,
+    "backups_cleared": [],
+    "4_managed_blender_stopped": true,
+    "5_mcp_session_closed": true,
+    "6_xvfb_cleaned_up": true,
+    "7_old_pid_terminated": true,
+    "8_gpu_memory_released": true,
+    "9_new_blender_started_fresh_pid": true,
+    "10_clean_empty_scene_verified": true
+  },
+  "isolation_verdict": "PASS"
+}

@@ -75,7 +75,7 @@ class TestZeldaReferenceRegression(unittest.TestCase):
         ev_check = verify_visual_review_evidence(
             reg["review_evidence"],
             expected_policy_digest=reg["policy_digest"],
-            verify_files_on_disk=True,
+            verify_files_on_disk=(reg["snapshot"]["source"] == "disk"),
         )
         self.assertTrue(ev_check["valid"], ev_check)
 

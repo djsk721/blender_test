@@ -318,7 +318,38 @@ def start_blender(
     env["BLENDER_PORT"] = str(cfg.blender_port)
     env.update(env_overrides)
 
-    pid, pgid, start_time = spawn_detached([blender_bin], env, log_path)
+    cmd = [blender_bin]
+    if int(cfg.blender_port) != 9876:
+        target_port = int(cfg.blender_port)
+        port_expr = (
+            "import bpy\n"
+            f"_P = {target_port}\n"
+            "for _s in bpy.data.scenes:\n"
+            "    if hasattr(_s, 'blendermcp_port'): _s.blendermcp_port = _P\n"
+            "def _bind_port():\n"
+            "    for _s in bpy.data.scenes:\n"
+            "        if hasattr(_s, 'blendermcp_port'): _s.blendermcp_port = _P\n"
+            "    _srv = getattr(bpy.types, 'blendermcp_server', None)\n"
+            "    if _srv is not None and getattr(_srv, 'running', False):\n"
+            "        if getattr(_srv, 'port', None) == _P:\n"
+            "            return None\n"
+            "        _srv.stop()\n"
+            "    try:\n"
+            "        if bpy.context.scene and hasattr(bpy.context.scene, 'blendermcp_port'):\n"
+            "            bpy.context.scene.blendermcp_port = _P\n"
+            "        if hasattr(bpy.ops, 'blendermcp') and hasattr(bpy.ops.blendermcp, 'start_server'):\n"
+            "            bpy.ops.blendermcp.start_server()\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    _srv2 = getattr(bpy.types, 'blendermcp_server', None)\n"
+            "    if _srv2 is not None and getattr(_srv2, 'running', False) and getattr(_srv2, 'port', None) == _P:\n"
+            "        return None\n"
+            "    return 0.25\n"
+            "bpy.app.timers.register(_bind_port, first_interval=0.1, persistent=False)\n"
+        )
+        cmd.extend(["--python-expr", port_expr])
+
+    pid, pgid, start_time = spawn_detached(cmd, env, log_path)
     return ProcessRecord(
         pid=pid,
         pgid=pgid,
