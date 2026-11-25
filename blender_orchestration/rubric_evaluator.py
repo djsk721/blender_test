@@ -430,6 +430,57 @@ class BlindRubricEvaluator:
         }
 
 
+def compose_review_sheets(renders: list[dict[str, Any]], out_dir: Path | None = None) -> list[Path]:
+    """Pack up to 7 multi-view renders into 2 crisp labeled contact sheets (turnaround 2x2 + closeups 3x1).
+
+    Reduces intermediate vision token usage by ~60% while showing all views side-by-side at readable detail.
+    Falls back cleanly to individual PNG paths if Pillow is unavailable or <= 3 images exist.
+    """
+    valid = [(str(r.get("view") or Path(str(r["path"])).stem), Path(str(r["path"]))) for r in renders if Path(str(r.get("path") or "")).is_file()]
+    if len(valid) <= 3:
+        return [p for _, p in valid]
+    try:
+        from PIL import Image, ImageDraw
+    except Exception:
+        return [p for _, p in valid]
+
+    save_dir = Path(out_dir) if out_dir else valid[0][1].parent
+    save_dir.mkdir(parents=True, exist_ok=True)
+    wide = [(v, p) for v, p in valid if not v.startswith("closeup")]
+    close = [(v, p) for v, p in valid if v.startswith("closeup")]
+    if not wide:
+        wide, close = valid[:4], valid[4:]
+
+    def _make_grid(items: list[tuple[str, Path]], cols: int, tile_w: int, tile_h: int, fname: str) -> Path | None:
+        if not items:
+            return None
+        rows = (len(items) + cols - 1) // cols
+        canvas = Image.new("RGB", (cols * tile_w, rows * tile_h), (210, 214, 220))
+        draw = ImageDraw.Draw(canvas)
+        for idx, (label, path) in enumerate(items):
+            r, c = divmod(idx, cols)
+            try:
+                im = Image.open(path).convert("RGB").resize((tile_w, tile_h), Image.Resampling.LANCZOS)
+            except Exception:
+                im = Image.open(path).convert("RGB").resize((tile_w, tile_h))
+            x0, y0 = c * tile_w, r * tile_h
+            canvas.paste(im, (x0, y0))
+            draw.rectangle([x0 + 6, y0 + 6, x0 + 180, y0 + 30], fill=(24, 28, 34))
+            draw.text((x0 + 12, y0 + 11), f"{label} ({path.name})", fill=(245, 248, 252))
+        out_p = save_dir / fname
+        canvas.save(out_p, format="PNG")
+        return out_p
+
+    sheets: list[Path] = []
+    s1 = _make_grid(wide[:4], 2, 512, 640, "_sheet_turnaround.png")
+    if s1:
+        sheets.append(s1)
+    s2 = _make_grid(close[:3], min(3, max(1, len(close))), 448, 560, "_sheet_closeups.png")
+    if s2:
+        sheets.append(s2)
+    return sheets or [p for _, p in valid]
+
+
 class StageVisualReviewer:
     """Independent intermediate stage reviewer (Blockout Clay, Geometry Clay, Lookdev, Rig/Anim)."""
 
@@ -460,11 +511,11 @@ class StageVisualReviewer:
         if not image_paths:
             return {"verdict": "NOT_VERIFIED", "passed": False, "score": 0.0, "defects": [], "reason": "No stage renders found."}
 
-        attach = list(image_paths)
+        attach = compose_review_sheets(renders)
         if approved_reference_path and Path(approved_reference_path).is_file():
             attach.append(Path(approved_reference_path))
         prior_names = []
-        for pr in (prior_renders or [])[:2]:
+        for pr in (prior_renders or [])[:1]:
             pp = Path(str(pr.get("path") or ""))
             if pp.is_file() and pp not in attach:
                 attach.append(pp)
@@ -518,6 +569,16 @@ class StageVisualReviewer:
             title=f"Stage Visual QA ({stage_name})",
         )
         sid = str(raw.get("session_id") or "").strip()
+        if raw.get("quota_blocked"):
+            return {
+                "verdict": "NOT_VERIFIED",
+                "passed": False,
+                "score": 0.0,
+                "reviewer_session_id": sid,
+                "defects": [],
+                "quota_blocked": raw.get("quota_blocked"),
+                "reason": "Stage reviewer hit provider quota limit.",
+            }
         if int(raw.get("returncode", 1)) != 0 or not sid or sid in set(producer_session_ids or []):
             return {
                 "verdict": "NOT_VERIFIED",

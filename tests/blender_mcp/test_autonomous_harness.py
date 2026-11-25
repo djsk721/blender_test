@@ -40,6 +40,7 @@ from blender_orchestration.rubric_evaluator import (
     ISOLATED_NO_MCP_OPENCODE_CONFIG,
     REQUIRED_DEFECT_FIELDS,
     BlindRubricEvaluator,
+    compose_review_sheets,
     detect_quota_error,
     evaluate_rubric_acceptance,
 )
@@ -256,6 +257,15 @@ class TestAutonomousHarnessCore(unittest.TestCase):
         self.assertEqual(q["resets_at"], 1795583920)
         self.assertIsNone(detect_quota_error(["normal warning"]))
 
+        with tempfile.TemporaryDirectory() as td:
+            views = ["front", "three_quarter", "side", "rear", "closeup_top", "closeup_mid", "closeup_bottom"]
+            renders = [{"view": v, "path": str(_write_dummy_png(Path(td) / f"r_{v}.png", 64, 80))} for v in views]
+            sheets = compose_review_sheets(renders, Path(td))
+            self.assertEqual(len(sheets), 2)
+            for s in sheets:
+                self.assertTrue(s.is_file())
+                self.assertGreater(s.stat().st_size, 500)
+
     def test_05_real_blender_mcp_toolkit_e2e_and_empty_glb_rejection(self) -> None:
         """Real Blender MCP test on isolated port 9879: geometry + painted texture + PBR + Cycles + rig/anim + GLB reimport."""
         port = 9879
@@ -304,29 +314,43 @@ class TestAutonomousHarnessCore(unittest.TestCase):
                     "sculpt_stats = bt.deform_mesh_sculpt(base, [{'center': (0.0, -0.11, 0.20), 'radius': 0.06, 'delta': (0.0, -0.015, 0.0)}])\n"
                     "core = bt.create_quad_sphere('SM_Test_Core', (0.0, 0.0, 0.20), (0.05, 0.05, 0.07), subdivisions=2, collection=col)\n"
                     "fin = bt.sculpt_tapered_ribbon('SM_Test_Fin', [(0.10, 0.0, 0.05), (0.15, 0.0, 0.20), (0.08, 0.0, 0.34)], [0.03, 0.04, 0.01], [0.015, 0.02, 0.005], collection=col)\n"
+                    "head_info = bt.build_stylized_head_base('SM_TestHead', (0.45, 0.0, 0.45), height=0.20, head_tilt_deg=(6.0, -4.0, 8.0), collection=col)\n"
+                    "arm_info = bt.build_articulated_arm_chain('SM_TestArm', (0.35, 0.0, 0.32), (0.28, -0.05, 0.20), (0.36, -0.14, 0.24), side='L', glove_coverage=0.75, collection=col)\n"
+                    "sheet = bt.build_sculpted_hair_sheet('SM_TestSheet', [(0.38, 0.04, 0.50), (0.52, 0.04, 0.50)], [(0.34, 0.14, 0.28), (0.56, 0.14, 0.28)], collection=col)\n"
+                    "braid = bt.build_interwoven_braid('SM_TestBraid', [(0.37, -0.05, 0.52), (0.45, -0.08, 0.54), (0.53, -0.05, 0.52)], radius=0.012, twists=4.0, collection=col)\n"
                     "bt.smart_uv_unwrap(base); bt.project_planar_uv(core, axis='Y'); bt.smart_uv_unwrap(fin)\n"
                     "tex = bt.create_painted_image_texture('TEX_Test_Rune', 256, 256, [\n"
-                    "  {'op': 'radial_gradient', 'cx': 0.5, 'cy': 0.5, 'rx': 0.45, 'ry': 0.45, 'inner_color': (0.2, 0.9, 1.0, 1.0), 'outer_color': (0.02, 0.12, 0.25, 1.0)},\n"
-                    "  {'op': 'ring', 'cx': 0.5, 'cy': 0.5, 'rx': 0.28, 'ry': 0.28, 'thickness': 0.08, 'color': (1.0, 0.95, 0.7, 1.0)},\n"
+                    "  {'op': 'radial_gradient', 'cx': 0.5, 'cy': 0.5, 'rx': 0.45, 'ry': 0.45, 'inner_color': bt.hex_to_srgb('#38E8FF'), 'outer_color': bt.hex_to_srgb('#0A1E3D')},\n"
+                    "  {'op': 'ring', 'cx': 0.5, 'cy': 0.5, 'rx': 0.28, 'ry': 0.28, 'thickness': 0.08, 'color': bt.hex_to_srgb('#FFF2B2')},\n"
+                    "  {'op': 'polyline', 'points': [(0.2, 0.2), (0.5, 0.25), (0.8, 0.2)], 'thickness': 0.02, 'color': bt.hex_to_srgb('#FFFFFF')},\n"
                     "], pack=True)\n"
-                    "mat_metal = bt.make_pbr_material('MAT_Test_Bronze', (0.35, 0.24, 0.12), roughness=0.35, metallic=0.85)\n"
-                    "mat_core = bt.make_pbr_material('MAT_Test_Core', (0.2, 0.85, 1.0), roughness=0.15, emission_color=(0.15, 0.85, 1.0), emission_strength=3.5, image_texture=tex)\n"
+                    "mat_metal = bt.make_pbr_material('MAT_Test_Bronze', '#6E4A24', roughness=0.35, metallic=0.85)\n"
+                    "mat_core = bt.make_pbr_material('MAT_Test_Core', '#147BB8', roughness=0.15, emission_texture=tex, emission_strength=4.5, image_texture=tex)\n"
                     "bt.assign_material(base, mat_metal); bt.assign_material(fin, mat_metal); bt.assign_material(core, mat_core)\n"
+                    "bt.assign_material(sheet, mat_metal); bt.assign_material(braid, mat_metal)\n"
+                    "for o in col.all_objects:\n"
+                    "    if o.type == 'MESH' and len(o.data.materials) == 0:\n"
+                    "        bt.assign_material(o, mat_metal)\n"
+                    "hygiene = bt.clean_loose_geometry(s)\n"
+                    "anomalies = bt.audit_geometry_anomalies(s)\n"
                     "rig = bt.create_rig_and_bind(s, [{'name': 'Bone_Root', 'head': (0,0,0), 'tail': (0,0,0.2), 'parent': None}, {'name': 'Bone_Top', 'head': (0,0,0.2), 'tail': (0,0,0.36), 'parent': 'Bone_Root'}])\n"
                     "arm = bpy.data.objects[rig['armature_name']]\n"
                     "anim = bt.create_cycle_animation(arm, {1: {'Bone_Top': (0,0,0)}, 12: {'Bone_Top': (0,0,12)}, 24: {'Bone_Top': (0,0,0)}}, action_name='ACT_Sway')\n"
                     f"rend = bt.render_standard_views(s, {json.dumps(str(out_dir / 'renders'))}, 'live', views=['three_quarter'], mode='lookdev', res=(256, 256), samples=8, use_gpu=True)\n"
                     f"glb = bt.export_and_verify_glb(s, {json.dumps(str(out_dir / 'lantern.glb'))})\n"
                     "audit = bt.get_scene_audit(s)\n"
-                    "print('__ORCH_JSON__:' + json.dumps({'sculpt': sculpt_stats, 'rig': rig, 'anim': anim, 'rend': rend, 'glb': glb, 'audit': audit}))\n"
+                    "print('__ORCH_JSON__:' + json.dumps({'sculpt': sculpt_stats, 'head_uv': head_info['uv_landmarks'], 'arm_joints': arm_info['joints'], 'hygiene': hygiene, 'anomalies': anomalies, 'rig': rig, 'anim': anim, 'rend': rend, 'glb': glb, 'audit': audit}))\n"
                 )
                 res = adapter.execute_blender_json(build_code, user_prompt="Build toolkit test prop", stage="test_toolkit_build")["parsed"]
                 self.assertGreater(res["sculpt"]["vertices_moved"], 0)
-                self.assertEqual(res["audit"]["mesh_count"], 3)
+                self.assertGreaterEqual(res["audit"]["mesh_count"], 20)
                 self.assertEqual(res["audit"]["uv_missing_objects"], [])
+                self.assertIn("mouth_center", res["head_uv"])
+                self.assertIn("palm_center", res["arm_joints"])
+                self.assertTrue(res["anomalies"]["grounding_ok"])
                 self.assertTrue(res["anim"]["loop_closed"])
                 self.assertTrue(res["glb"]["valid"])
-                self.assertGreaterEqual(res["glb"]["reimport_mesh_count"], 3)
+                self.assertGreaterEqual(res["glb"]["reimport_mesh_count"], 20)
                 self.assertEqual(res["glb"]["reimport_armature_count"], 1)
                 self.assertEqual(len(res["rend"]["renders"]), 1)
                 self.assertGreater(res["rend"]["renders"][0]["bytes"], 1000)
