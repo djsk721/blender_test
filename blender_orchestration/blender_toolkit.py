@@ -112,6 +112,7 @@ def add_modifiers(
     *,
     solidify: float | None = None,
     solidify_offset: float = 1.0,
+    solidify_even_offset: bool = False,
     bevel: float | None = None,
     bevel_segments: int = 2,
     subsurf: int | None = None,
@@ -127,7 +128,9 @@ def add_modifiers(
         m = obj.modifiers.new("Solidify", "SOLIDIFY")
         m.thickness = float(solidify)
         m.offset = float(solidify_offset)
-        m.use_even_offset = True
+        m.use_even_offset = bool(solidify_even_offset)
+        if hasattr(m, "thickness_clamp"):
+            m.thickness_clamp = 0.4
     if bevel is not None and bevel > 0.0:
         m = obj.modifiers.new("Bevel", "BEVEL")
         m.width = float(bevel)
@@ -1909,7 +1912,7 @@ def _compute_collection_bounds(scene: Any, export_collection: str = "COL_Export"
             max(c.z for c in cs),
         )
 
-    # If SM_BaseBody is present, exclude >1.5m outlier spikes so studio lighting/camera framing stays anchored to character
+    # If SM_BaseBody is present, exclude tight outlier spikes so studio lighting/camera framing stays anchored to character
     anchor_box = None
     body_obj = next((o for o in meshes if o.name == "SM_BaseBody"), None)
     if body_obj is not None:
@@ -1920,12 +1923,12 @@ def _compute_collection_bounds(scene: Any, export_collection: str = "COL_Export"
         b = _box(o)
         if anchor_box is not None and o is not body_obj:
             if (
-                b[0] < anchor_box[0] - 1.5
-                or b[1] < anchor_box[1] - 1.5
-                or b[2] < anchor_box[2] - 0.5
-                or b[3] > anchor_box[3] + 1.5
-                or b[4] > anchor_box[4] + 1.5
-                or b[5] > anchor_box[5] + 1.0
+                b[0] < anchor_box[0] - 0.85
+                or b[1] < anchor_box[1] - 0.85
+                or b[2] < anchor_box[2] - 0.04
+                or b[3] > anchor_box[3] + 0.85
+                or b[4] > anchor_box[4] + 0.85
+                or b[5] > anchor_box[5] + 0.30
             ):
                 continue
         xs.extend((b[0], b[3]))
@@ -2270,13 +2273,22 @@ def _setup_studio_lights_and_world(scene: Any, bounds: dict[str, Any], *, mode: 
     span = max(bounds["size"][0], bounds["size"][1], bounds["size"][2], 0.5)
 
     # Grounded studio contact shadow catcher (kept strictly in COL_Studio, excluded from COL_Export)
+    shadow_z = mn.z - 0.001
+    exp_col = bpy.data.collections.get("COL_Export")
+    body_obj = bpy.data.objects.get("SM_BaseBody")
+    if body_obj is not None and body_obj.type == "MESH" and (exp_col is None or body_obj.name in exp_col.all_objects):
+        deps = bpy.context.evaluated_depsgraph_get()
+        eo = body_obj.evaluated_get(deps)
+        body_min_z = min((eo.matrix_world @ Vector(corner)).z for corner in eo.bound_box)
+        shadow_z = min(0.0, body_min_z) - 0.001
+
     bm_g = bmesh.new()
     bmesh.ops.create_grid(bm_g, x_segments=2, y_segments=2, size=span * 2.5)
     g_mesh = bpy.data.meshes.new("SM_Studio_ShadowCatcher_Mesh")
     bm_g.to_mesh(g_mesh)
     bm_g.free()
     g_obj = bpy.data.objects.new("SM_Studio_ShadowCatcher", g_mesh)
-    g_obj.location = Vector((ctr.x, ctr.y, mn.z - 0.001))
+    g_obj.location = Vector((ctr.x, ctr.y, shadow_z))
     g_obj.is_shadow_catcher = True
     col.objects.link(g_obj)
 

@@ -94,12 +94,15 @@ def build_isolated_opencode_env(
     *,
     mcp_servers: dict[str, Any] | None = None,
     global_config_path: Path | None = None,
+    deny_builtin_tools: bool = True,
 ) -> dict[str, str]:
     """Create an isolated XDG_CONFIG_HOME OpenCode config stripping global MCP servers.
 
     Reads ~/.config/opencode/opencode.json read-only (never modifying global files),
-    replaces `mcp.servers` with `mcp_servers or {}`, writes `<tmpdir>/xdg/opencode/opencode.json`,
-    and returns an environment dictionary with `XDG_CONFIG_HOME` pointing there.
+    replaces `mcp.servers` with `mcp_servers or {}`, optionally denies built-in file/shell
+    tools so headless single-turn codegen/review never spins in multi-turn loops, writes
+    `<tmpdir>/xdg/opencode/opencode.json`, and returns an environment dictionary with
+    `XDG_CONFIG_HOME` pointing there.
     """
     tmp = Path(tmpdir)
     xdg_dir = tmp / "xdg"
@@ -115,6 +118,11 @@ def build_isolated_opencode_env(
         except Exception:
             pass
     cfg["mcp"] = {"servers": dict(mcp_servers or {})}
+    if deny_builtin_tools:
+        cfg["permissions"] = [
+            {"action": act, "resource": "*", "effect": "deny"}
+            for act in ("edit", "write", "shell", "read", "glob", "grep", "subagent", "webfetch")
+        ]
     (oc_dir / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(xdg_dir)
