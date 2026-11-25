@@ -1741,6 +1741,8 @@ def make_pbr_material(
     subsurface: float = 0.0,
     coat: float = 0.0,
     specular: float = 0.5,
+    sheen: float = 0.0,
+    surface_type: str | None = None,
     emission_color: tuple[float, float, float] | str | None = None,
     emission_strength: float = 0.0,
     emission_texture: Any | None = None,
@@ -1768,6 +1770,7 @@ def make_pbr_material(
             return hex_to_linear(c)
         return (float(c[0]), float(c[1]), float(c[2]))
 
+    stype = (surface_type or "").strip().lower()
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     out.location = (650, 0)
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
@@ -1780,10 +1783,16 @@ def make_pbr_material(
     bsdf.inputs["Metallic"].default_value = float(metallic)
     if "Specular IOR Level" in bsdf.inputs:
         bsdf.inputs["Specular IOR Level"].default_value = float(specular)
+    eff_sheen = max(float(sheen), 0.30 if stype == "fabric" else 0.0)
+    if eff_sheen > 0.0:
+        for s_name in ("Sheen Weight", "Sheen"):
+            if s_name in bsdf.inputs:
+                bsdf.inputs[s_name].default_value = min(1.0, eff_sheen)
+                break
     if "Subsurface Weight" in bsdf.inputs and subsurface > 0.0:
         bsdf.inputs["Subsurface Weight"].default_value = float(subsurface)
     if "Subsurface Scale" in bsdf.inputs and subsurface > 0.0:
-        bsdf.inputs["Subsurface Scale"].default_value = 0.015
+        bsdf.inputs["Subsurface Scale"].default_value = 0.008
     if "Coat Weight" in bsdf.inputs and coat > 0.0:
         bsdf.inputs["Coat Weight"].default_value = float(coat)
     if emission_texture is not None and emission_strength > 0.0:
@@ -1832,6 +1841,46 @@ def make_pbr_material(
         nt.links.new(ao.outputs["AO"], mix_ao.inputs[7])
         color_socket = mix_ao.outputs[2]
 
+    # Subtle tonal variation and surface micro-detail for tactile game assets (fabric/leather/hair/metal)
+    tc_obj = None
+    if stype in ("fabric", "leather", "hair", "metal", "stone"):
+        tc_obj = nt.nodes.new("ShaderNodeTexCoord")
+        tc_obj.location = (-680, -240)
+
+    if stype in ("fabric", "hair") and image_texture is None:
+        t_noise = nt.nodes.new("ShaderNodeTexNoise")
+        t_noise.location = (-440, 40)
+        if stype == "hair":
+            mp = nt.nodes.new("ShaderNodeMapping")
+            mp.location = (-560, 40)
+            mp.inputs["Scale"].default_value = (42.0, 42.0, 4.0)
+            nt.links.new(tc_obj.outputs["Object"], mp.inputs["Vector"])
+            nt.links.new(mp.outputs["Vector"], t_noise.inputs["Vector"])
+            t_noise.inputs["Scale"].default_value = 3.5
+        else:
+            nt.links.new(tc_obj.outputs["Object"], t_noise.inputs["Vector"])
+            t_noise.inputs["Scale"].default_value = 48.0
+        t_noise.inputs["Detail"].default_value = 4.0
+        mr_t = nt.nodes.new("ShaderNodeMapRange")
+        mr_t.location = (-260, 40)
+        mr_t.inputs["From Min"].default_value = 0.25
+        mr_t.inputs["From Max"].default_value = 0.75
+        amp = 0.08 if stype == "hair" else 0.06
+        mr_t.inputs["To Min"].default_value = 1.0 - amp
+        mr_t.inputs["To Max"].default_value = 1.0 + amp
+        nt.links.new(t_noise.outputs["Fac"], mr_t.inputs["Value"])
+        mix_var = nt.nodes.new("ShaderNodeMix")
+        mix_var.data_type = "RGBA"
+        mix_var.blend_type = "MULTIPLY"
+        mix_var.location = (95, 130)
+        mix_var.inputs["Factor"].default_value = 1.0
+        if color_socket is not None:
+            nt.links.new(color_socket, mix_var.inputs[6])
+        else:
+            mix_var.inputs[6].default_value = rgba
+        nt.links.new(mr_t.outputs["Result"], mix_var.inputs[7])
+        color_socket = mix_var.outputs[2]
+
     # Optional Fresnel rim tint for stylized form separation
     if rim_color is not None and rim_strength > 0.0:
         lin_rim = _to_lin_rgb(rim_color)
@@ -1864,6 +1913,75 @@ def make_pbr_material(
         bump.inputs["Distance"].default_value = 0.004
         nt.links.new(noise.outputs["Fac"], bump.inputs["Height"])
         nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    elif stype == "fabric":
+        wave = nt.nodes.new("ShaderNodeTexWave")
+        wave.location = (-440, -240)
+        wave.wave_type = "BANDS"
+        wave.bands_direction = "DIAGONAL"
+        wave.inputs["Scale"].default_value = 160.0
+        wave.inputs["Distortion"].default_value = 1.5
+        nt.links.new(tc_obj.outputs["Object"], wave.inputs["Vector"])
+        f_noise = nt.nodes.new("ShaderNodeTexNoise")
+        f_noise.location = (-440, -380)
+        f_noise.inputs["Scale"].default_value = 220.0
+        nt.links.new(tc_obj.outputs["Object"], f_noise.inputs["Vector"])
+        mix_h = nt.nodes.new("ShaderNodeMath")
+        mix_h.operation = "MULTIPLY_ADD"
+        mix_h.location = (-220, -280)
+        mix_h.inputs[1].default_value = 0.65
+        nt.links.new(wave.outputs["Fac"], mix_h.inputs[0])
+        nt.links.new(f_noise.outputs["Fac"], mix_h.inputs[2])
+        bump = nt.nodes.new("ShaderNodeBump")
+        bump.location = (40, -240)
+        bump.inputs["Strength"].default_value = 0.14
+        bump.inputs["Distance"].default_value = 0.002
+        nt.links.new(mix_h.outputs["Value"], bump.inputs["Height"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    elif stype in ("leather", "stone"):
+        noise = nt.nodes.new("ShaderNodeTexNoise")
+        noise.location = (-440, -240)
+        noise.inputs["Scale"].default_value = 95.0 if stype == "leather" else 40.0
+        noise.inputs["Detail"].default_value = 6.0
+        nt.links.new(tc_obj.outputs["Object"], noise.inputs["Vector"])
+        mr_r = nt.nodes.new("ShaderNodeMapRange")
+        mr_r.location = (-220, -140)
+        mr_r.inputs["To Min"].default_value = max(0.08, float(roughness) - 0.07)
+        mr_r.inputs["To Max"].default_value = min(0.95, float(roughness) + 0.07)
+        nt.links.new(noise.outputs["Fac"], mr_r.inputs["Value"])
+        nt.links.new(mr_r.outputs["Result"], bsdf.inputs["Roughness"])
+        bump = nt.nodes.new("ShaderNodeBump")
+        bump.location = (40, -240)
+        bump.inputs["Strength"].default_value = 0.18 if stype == "leather" else 0.22
+        bump.inputs["Distance"].default_value = 0.0025
+        nt.links.new(noise.outputs["Fac"], bump.inputs["Height"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    elif stype == "hair":
+        mp_h = nt.nodes.new("ShaderNodeMapping")
+        mp_h.location = (-560, -260)
+        mp_h.inputs["Scale"].default_value = (42.0, 42.0, 4.0)
+        nt.links.new(tc_obj.outputs["Object"], mp_h.inputs["Vector"])
+        h_noise = nt.nodes.new("ShaderNodeTexNoise")
+        h_noise.location = (-360, -260)
+        h_noise.inputs["Scale"].default_value = 6.0
+        h_noise.inputs["Detail"].default_value = 5.0
+        nt.links.new(mp_h.outputs["Vector"], h_noise.inputs["Vector"])
+        bump = nt.nodes.new("ShaderNodeBump")
+        bump.location = (40, -240)
+        bump.inputs["Strength"].default_value = 0.22
+        bump.inputs["Distance"].default_value = 0.002
+        nt.links.new(h_noise.outputs["Fac"], bump.inputs["Height"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    elif stype == "metal":
+        m_noise = nt.nodes.new("ShaderNodeTexNoise")
+        m_noise.location = (-360, -240)
+        m_noise.inputs["Scale"].default_value = 80.0
+        nt.links.new(tc_obj.outputs["Object"], m_noise.inputs["Vector"])
+        mr_m = nt.nodes.new("ShaderNodeMapRange")
+        mr_m.location = (-160, -240)
+        mr_m.inputs["To Min"].default_value = max(0.06, float(roughness) - 0.05)
+        mr_m.inputs["To Max"].default_value = min(0.95, float(roughness) + 0.05)
+        nt.links.new(m_noise.outputs["Fac"], mr_m.inputs["Value"])
+        nt.links.new(mr_m.outputs["Result"], bsdf.inputs["Roughness"])
 
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat
@@ -2615,6 +2733,10 @@ def create_cycle_animation(
 ) -> dict[str, Any]:
     """Keyframe Euler pose rotations (degrees) on an armature for a clean looped animation cycle."""
     _require_blender()
+    if isinstance(armature_obj, dict):
+        armature_obj = bpy.data.objects.get(armature_obj.get("armature_name", "ARM_Asset"))
+    if armature_obj is None or armature_obj.type != "ARMATURE":
+        raise ValueError(f"Expected ARMATURE object or rig result dict, got {armature_obj!r}")
     if armature_obj.animation_data is None:
         armature_obj.animation_data_create()
     old = bpy.data.actions.get(action_name)

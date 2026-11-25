@@ -349,21 +349,54 @@ def _get_arm_vertex_indices(obj: Any) -> dict[str, Any]:
         if hand_dir.length < 1e-4:
             hand_dir = (wr_p - el_p)
         hand_dir = hand_dir.normalized() if hand_dir.length > 1e-4 else Vector((side_sign, 0.0, -0.5)).normalized()
-        tip_p = hd_p + hand_dir * 0.08
+        tip_p = hd_p + hand_dir * 0.22
 
         for idx, vp in enumerate(verts_pre):
-            if vp.x * side_sign < sh_x_cut or vp.z > neck_z + 0.02 or vp.z < hip_z * 0.68:
+            if vp.x * side_sign < sh_x_cut or vp.z > neck_z + 0.02 or vp.z < hip_z * 0.45:
                 continue
             d_up = _pt_seg_dist(vp, sh_p, el_p)
             d_lo = _pt_seg_dist(vp, el_p, tip_p)
-            if min(d_up, d_lo) <= 0.115:
+            if d_up <= 0.120 or d_lo <= 0.165:
                 arm_set.add(idx)
-                if (vp - wr_p).dot(hand_dir) >= -0.015 and (vp - hd_p).length <= 0.12:
-                    hand_set.add(idx)
-                if (vp - el_p).length <= 0.048:
-                    elbow_set.add(idx)
-                if (vp - wr_p).length <= 0.036:
-                    wrist_set.add(idx)
+
+        # Edge-connectivity flood so all spread fingers / distal fingertips remain included
+        for _ in range(4):
+            added: list[int] = []
+            for e in mesh.edges:
+                v0, v1 = int(e.vertices[0]), int(e.vertices[1])
+                in0, in1 = v0 in arm_set, v1 in arm_set
+                if in0 != in1:
+                    cand = v1 if in0 else v0
+                    if cand < len(verts_pre):
+                        vp = verts_pre[cand]
+                        if vp.x * side_sign >= sh_x_cut and hip_z * 0.45 <= vp.z <= neck_z + 0.02:
+                            added.append(cand)
+            if not added:
+                break
+            arm_set.update(added)
+
+        for idx in arm_set:
+            vp = verts_pre[idx]
+            if (vp - wr_p).dot(hand_dir) >= -0.005 and (vp - hd_p).length <= 0.20:
+                hand_set.add(idx)
+            if (vp - el_p).length <= 0.048:
+                elbow_set.add(idx)
+            if (vp - wr_p).length <= 0.036:
+                wrist_set.add(idx)
+        for _ in range(4):
+            h_added: list[int] = []
+            for e in mesh.edges:
+                v0, v1 = int(e.vertices[0]), int(e.vertices[1])
+                in0, in1 = v0 in hand_set, v1 in hand_set
+                if in0 != in1:
+                    cand = v1 if in0 else v0
+                    if cand in arm_set and cand < len(verts_pre):
+                        vp = verts_pre[cand]
+                        if (vp - wr_p).dot(hand_dir) >= -0.005 and (vp - hd_p).length <= 0.22:
+                            h_added.append(cand)
+            if not h_added:
+                break
+            hand_set.update(h_added)
         out[f"arm_{s_tag}"] = arm_set
         out[f"hand_{s_tag}"] = hand_set
         out[f"elbow_{s_tag}"] = elbow_set
@@ -616,20 +649,30 @@ def apply_semantic_stylization(obj: Any, controls: dict[str, float]) -> dict[str
         validated[key] = max(lo, min(hi, float(raw_val)))
 
     mesh = obj.data
-    info = inspect_anatomical_regions(obj, assign_vertex_groups=True)
-    lm = info["landmarks"]
-
     if not mesh.shape_keys:
         obj.shape_key_add(name="Basis", from_mix=False)
     sk = mesh.shape_keys.key_blocks.get("SK_Stylization")
     if sk is None:
         sk = obj.shape_key_add(name="SK_Stylization", from_mix=False)
-    sk.value = 1.0
-
-    # Initialize SK_Stylization from Basis so repeated calls are clean and idempotent
     basis = mesh.shape_keys.key_blocks["Basis"]
+
+    # Measure clean un-stylized / un-posed landmarks from Basis so repeated calls stay 100% idempotent
+    saved_sk_vals: list[tuple[Any, float]] = []
+    for kb in mesh.shape_keys.key_blocks:
+        if kb.name != "Basis":
+            saved_sk_vals.append((kb, kb.value))
+            kb.value = 0.0
     for i in range(len(basis.data)):
         sk.data[i].co = basis.data[i].co.copy()
+    mesh.update()
+    try:
+        info = inspect_anatomical_regions(obj, assign_vertex_groups=True)
+        lm = info["landmarks"]
+    finally:
+        for kb, val in saved_sk_vals:
+            kb.value = val
+        sk.value = 1.0
+        mesh.update()
 
     inv_mat = obj.matrix_world.inverted()
     mat = obj.matrix_world
@@ -1303,8 +1346,9 @@ def create_fitted_boots(
         tcx, tcy, trx, try_ = _band(shaft_top_z - 0.025, shaft_top_z + 0.025, 0.056, 0.064)
 
         sections = [
-            {"center": (fcx, fcy + 0.002, 0.000), "rx": frx * 1.06, "ry": fry * 1.06, "squash_front": 1.03, "squash_back": 0.98},
-            {"center": (fcx, fcy + 0.002, sole_thickness), "rx": frx * 1.07, "ry": fry * 1.06, "squash_front": 1.03, "squash_back": 0.98},
+            {"center": (fcx, fcy + 0.002, 0.000), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 0.98},
+            {"center": (fcx, fcy + 0.002, sole_thickness), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 0.98},
+            {"center": (fcx, fcy + 0.002, sole_thickness + 0.012), "rx": frx * 1.03, "ry": fry * 0.96, "squash_front": 1.03, "squash_back": 0.98},
             {"center": (0.5 * (fcx + acx), fcy * 0.50 + acy * 0.50 + 0.004, 0.064), "rx": frx * 1.00, "ry": fry * 0.84, "squash_front": 1.04, "squash_back": 0.98},
             {"center": (acx, acy + 0.003, ankle_z_est + 0.012), "rx": arx, "ry": ary + 0.004, "squash_front": 1.0, "squash_back": 0.98},
             {"center": (mcx, mcy, 0.5 * (ankle_z_est + shaft_top_z)), "rx": mrx, "ry": mry},
@@ -1324,10 +1368,13 @@ def create_fitted_boots(
 
         c_bot = max(ankle_z_est + 0.025, shaft_top_z - cuff_height)
         c_top = shaft_top_z + 0.014
+        # Clamp X radius so left and right cuffs stay cleanly separated across the inner ankle
+        cuff_rx = min(trx + 0.011, max(0.042, abs(tcx) - 0.009))
+        cuff_ry = try_ + 0.011
         cuff_secs = [
-            {"center": (tcx, tcy, c_bot), "rx": trx + 0.015, "ry": try_ + 0.015},
-            {"center": (tcx, tcy, 0.5 * (c_bot + c_top)), "rx": trx + 0.017, "ry": try_ + 0.017},
-            {"center": (tcx, tcy, c_top), "rx": trx + 0.015, "ry": try_ + 0.015},
+            {"center": (tcx, tcy, c_bot), "rx": cuff_rx, "ry": cuff_ry},
+            {"center": (tcx, tcy, 0.5 * (c_bot + c_top)), "rx": cuff_rx + 0.001, "ry": cuff_ry + 0.002},
+            {"center": (tcx, tcy, c_top), "rx": cuff_rx, "ry": cuff_ry},
         ]
         cobj = bt.loft_sections(
             f"{name}_Cuff_{side_tag}",
@@ -1339,7 +1386,7 @@ def create_fitted_boots(
             subsurf=0,
             collection=col,
         )
-        bt.add_modifiers(cobj, solidify=0.006, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
+        bt.add_modifiers(cobj, solidify=0.004, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
         cuff_parts.append(cobj)
 
     boots_obj = bt.join_objects(boot_parts, name, collection=col)
@@ -1622,13 +1669,19 @@ def extract_sleeve_from_arm(
     selected: set[int] = set()
     used_v: set[int] = set()
     for pidx, poly in enumerate(polys):
-        if arm_verts_side and sum(1 for vi in poly["verts"] if vi in arm_verts_side) < 2:
-            continue
         c = poly["center"]
-        if c.x * side_sign < abs(sh.x) - 0.025 and c.y > sh.y - 0.04:
+        is_shoulder_cap = (
+            start_frac <= 0.05
+            and c.x * side_sign >= abs(sh.x) - 0.048
+            and (sh.z - 0.055) <= c.z <= (sh.z + 0.075)
+            and _pt_seg_dist(c, sh, el) <= 0.105
+        )
+        if not is_shoulder_cap and arm_verts_side and sum(1 for vi in poly["verts"] if vi in arm_verts_side) < 2:
+            continue
+        if not is_shoulder_cap and c.x * side_sign < abs(sh.x) - 0.025 and c.y > sh.y - 0.04:
             continue
         dist, u = _arm_param(c)
-        if dist <= 0.095 and start_frac <= u <= end_frac:
+        if (dist <= 0.095 and start_frac <= u <= end_frac) or is_shoulder_cap:
             selected.add(pidx)
             for vi in poly["verts"]:
                 used_v.add(vi)
@@ -1778,13 +1831,19 @@ def build_layered_curve_hair(
         c = p["center"]
         if c.z < neck_z + 0.065 or abs(c.x) > 0.088 or c.z > head_top_z + 0.01:
             continue
-        # Exclude face front below forehead AND pointed ears / lower jaw while covering crown + rear skull cleanly
-        is_crown = c.z > eye_z + 0.044
+        # Exclude face front below forehead AND pointed ears / lower jaw while covering temples + crown + rear skull
+        if abs(c.x) <= 0.050 and c.y < head_cy - 0.02:
+            is_crown = c.z > eye_z + 0.056
+        else:
+            is_crown = c.z > eye_z + 0.044
+        is_temple = abs(c.x) > 0.050 and c.z >= eye_z + 0.010 and c.y > head_cy - 0.042
         is_back_skull = c.y > head_cy + 0.015
-        if is_crown or is_back_skull:
+        if is_crown or is_temple or is_back_skull:
             scalp_faces.add(pidx)
             for vi in p["verts"]:
                 used_verts.add(vi)
+
+    scalp_thickness_eff = min(float(scalp_thickness_m), 0.008)
 
     created_objs: list[Any] = []
     if scalp_faces:
@@ -1818,7 +1877,7 @@ def build_layered_curve_hair(
                     v.co += radial.normalized() * min(scalp_offset_m * 0.65, 0.007)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
         scalp_obj = bt._finalize_bmesh_object(f"{name_prefix}_ScalpCap", bm, collection=col, smooth=True, subsurf=0)
-        bt.add_modifiers(scalp_obj, solidify=scalp_thickness_m, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
+        bt.add_modifiers(scalp_obj, solidify=scalp_thickness_eff, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
         bt.smart_uv_unwrap(scalp_obj)
         created_objs.append(scalp_obj)
 
@@ -1899,12 +1958,17 @@ def build_layered_curve_hair(
             p1_b = _snap_head(sg * 0.098, head_cy - 0.052, eye_z + 0.012, 0.016)
             p2_b = (sg * 0.096, head_cy - 0.042, eye_z - 0.075)
             sec_list.append({"points": [p0_b, p1_b, p2_b], "radii": [0.24, 0.72, 0.08], "width_scale": 0.68})
-            # 2 wispy angled forehead bangs per side strictly ABOVE eyebrows (z >= brow_z + 0.008)
-            for b_k, bx_s, bx_e in ((0, 0.015, 0.072), (1, 0.042, 0.095)):
-                bp0 = _snap_head(sg * bx_s, head_cy - 0.068, eye_z + 0.085, 0.004)
-                bp1 = _snap_head(sg * (0.5 * (bx_s + bx_e)), head_cy - 0.076, max(brow_z + 0.018, eye_z + 0.054), 0.014)
-                bp2 = _snap_head(sg * bx_e, head_cy - 0.062, max(brow_z + 0.008, eye_z + 0.038), 0.012)
-                sec_list.append({"points": [bp0, bp1, bp2], "radii": [0.25, 0.55, 0.08], "width_scale": 0.55})
+            # Temple-bridging lock sweeping softly over upper ear root so temple never reads bald
+            tp0 = _snap_head(sg * 0.086, head_cy - 0.025, eye_z + 0.068, 0.002)
+            tp1 = _snap_head(sg * 0.095, head_cy - 0.010, eye_z + 0.032, 0.014)
+            tp2 = _snap_head(sg * 0.102, head_cy + 0.032, eye_z - 0.025, 0.015)
+            sec_list.append({"points": [tp0, tp1, tp2], "radii": [0.25, 0.85, 0.10], "width_scale": 0.76})
+            # 3 overlapping center-parted bangs per side sweeping cleanly toward temples strictly ABOVE eyebrows
+            for b_k, bx_s, bx_e in ((0, 0.006, 0.055), (1, 0.022, 0.078), (2, 0.045, 0.096)):
+                bp0 = _snap_head(sg * bx_s, head_cy - 0.068, eye_z + 0.088, 0.004)
+                bp1 = _snap_head(sg * (0.5 * (bx_s + bx_e)), head_cy - 0.078, max(brow_z + 0.022 - b_k * 0.004, eye_z + 0.052), 0.013)
+                bp2 = _snap_head(sg * bx_e, head_cy - 0.062, max(brow_z + 0.010, eye_z + 0.038), 0.011)
+                sec_list.append({"points": [bp0, bp1, bp2], "radii": [0.25, 0.58, 0.08], "width_scale": 0.56})
 
     if auto_crown_braid:
         bcfg = auto_crown_braid if isinstance(auto_crown_braid, dict) else {}
@@ -2042,7 +2106,7 @@ def pose_hand_and_attach_prop(
         rel = wp - wrist
         along = rel.dot(palm_dir)
         dist_hand = (wp - hand_c).length
-        if 0.02 < along < 0.20 and dist_hand < 0.14:
+        if 0.02 < along < 0.24 and dist_hand < 0.18:
             is_thumb = (wp.y < hand_c.y - 0.015) and along < 0.12
             tip_t = max(0.0, min(1.0, (along - 0.04) / 0.12))
             if is_thumb:
@@ -2072,9 +2136,9 @@ def pose_hand_and_attach_prop(
             min_p = Vector((min(v.x for v in pverts_w), min(v.y for v in pverts_w), min(v.z for v in pverts_w)))
             max_p = Vector((max(v.x for v in pverts_w), max(v.y for v in pverts_w), max(v.z for v in pverts_w)))
             cur_center = 0.5 * (min_p + max_p)
-            target_center = grip_pocket + Vector((-side_sign * 0.035, -0.030, -0.015))
+            target_center = grip_pocket + Vector((-side_sign * 0.042, -0.014, 0.005))
             # Never bury the handheld slate inside the head or torso
-            target_center.y = min(target_center.y, min(grip_pocket.y - 0.015, -0.15))
+            target_center.y = min(target_center.y, min(grip_pocket.y - 0.008, -0.14))
             target_center.z = max(waist_z, min(neck_z - 0.03, target_center.z))
             prop_obj.location += (target_center - cur_center)
 
@@ -2170,7 +2234,7 @@ def pose_arm_for_prop_hold(
                     moved_sh += 1
             along_f = (cur_wp - el_rot).dot(fore_dir)
             perp_f = ((cur_wp - el_rot) - fore_dir * along_f).length
-            if along_f > -0.02 and perp_f < 0.115:
+            if along_f > -0.02 and perp_f < 0.22:
                 t_f = max(0.0, min(1.0, (along_f + 0.02) / 0.07))
                 w_f = t_f * t_f * (3.0 - 2.0 * t_f)
                 if w_f > 1e-4:
