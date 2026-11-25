@@ -143,6 +143,7 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "hand_max_spread = max((v - hand_c_vec).length for v in posed_hand_vs)\n"
                     "arm_l_max_x = max(posed_eval_v[i].x for i in arm_idx_check['arm_L'])\n"
                     "arm_l_min_z = min(posed_eval_v[i].z for i in arm_idx_check['arm_L'])\n"
+                    "stranded_fingertips = len([v for v in posed_eval_v if v.x > 0.28 and v.z < 0.88])\n"
                     "hand_y_after = arm_pose_3['hand_L'][1]\n"
                     "hand_z_after = arm_pose_3['hand_L'][2]\n"
                     "face_res = bmo.style_face_features(body, collection=col)\n"
@@ -150,6 +151,11 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "sleeve_l = bmo.extract_sleeve_from_arm(body, 'SM_TestSleeveL', side='L', collection=col)\n"
                     "sleeve_min_y = min((sleeve_l.matrix_world @ v.co).y for v in sleeve_l.data.vertices)\n"
                     "tunic = bmo.extract_garment_from_body(body, 'SM_TestTunic', z_min=0.95, z_max=1.32, x_abs_max=0.18, surface_offset_m=0.008, thickness_m=0.004, collection=col)\n"
+                    "plastron = bmo.create_chest_plastron_panel(body, 'SM_Undershirt_Front', collection=col)\n"
+                    "plastron_min_y = min((plastron.matrix_world @ v.co).y for v in plastron.data.vertices)\n"
+                    "leg_l = bmo.extract_garment_from_body(body, 'SM_Leggings_L', z_min=0.09, z_max=0.90, side='L', surface_offset_m=0.006, thickness_m=0.003, collection=col)\n"
+                    "leg_r = bmo.extract_garment_from_body(body, 'SM_Leggings_R', z_min=0.09, z_max=0.90, side='R', surface_offset_m=0.006, thickness_m=0.003, collection=col)\n"
+                    "leg_max_abs_x = max(abs((o.matrix_world @ v.co).x) for o in (leg_l, leg_r) for v in o.data.vertices)\n"
                     "skirt = bmo.create_flared_skirt_from_waist(body, 'SM_TestSkirt', hem_z=0.64, flare_radius_add=0.095, collection=col)\n"
                     "skirt_xs = [(skirt.matrix_world @ v.co).x for v in skirt.data.vertices]\n"
                     "skirt_ys = [(skirt.matrix_world @ v.co).y for v in skirt.data.vertices]\n"
@@ -188,6 +194,12 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "bodice_tmp.data.materials.append(bt.make_pbr_material('MAT_Bodice2', '#EFE6D2'))\n"
                     "integ_bodice_split = bmo.audit_base_mesh_integrity(scene)\n"
                     "bt.remove_object_if_exists('SM_Tunic_Bodice')\n"
+                    "bpy.ops.mesh.primitive_cylinder_add(radius=0.02, depth=0.05, location=(0.0, -0.2, 1.0))\n"
+                    "bad_prim = bpy.context.active_object\n"
+                    "bad_prim.name = 'Cylinder'\n"
+                    "bt.link_to_collection(bad_prim, col)\n"
+                    "integ_prim_obj = bmo.audit_base_mesh_integrity(scene)\n"
+                    "bt.remove_object_if_exists('Cylinder')\n"
                     "spike_obj = bt.create_beveled_panel('SM_SpikeTmp', [(-0.02,0),(0.02,0),(0.02,3.2),(-0.02,3.2)], depth=0.01, collection=col)\n"
                     "integ_spike = bmo.audit_base_mesh_integrity(scene)\n"
                     "bt.remove_object_if_exists('SM_SpikeTmp')\n"
@@ -227,6 +239,9 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "m_gold = bt.make_pbr_material('MAT_Gold', '#D8A62E', roughness=0.28, metallic=0.9, surface_type='metal')\n"
                     "bt.assign_material(body, m_skin)\n"
                     "bt.assign_material(tunic, m_tunic)\n"
+                    "bt.assign_material(plastron, m_skin)\n"
+                    "bt.assign_material(leg_l, m_tunic)\n"
+                    "bt.assign_material(leg_r, m_tunic)\n"
                     "bt.assign_material(skirt, m_tunic)\n"
                     "bt.assign_material(sleeve_l, m_tunic)\n"
                     "bt.assign_material(hem_trim, m_gold)\n"
@@ -237,6 +252,8 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "for hn in hair['created_objects']:\n"
                     "    bt.assign_material(bpy.data.objects[hn], m_hair)\n"
                     "bt.assign_material(prop, m_tunic)\n"
+                    "tex_rune = bt.create_painted_image_texture('T_TestRune', size=256, base_hex='#181C24', accent_hex='#30E8FF', pattern='rune_lens')\n"
+                    "rune_tex_ok = bool(tex_rune is not None and tex_rune.packed_file is not None and tex_rune.size[0] == 256)\n"
                     "rig_res = bt.create_rig_and_bind(scene, [{'name': 'Root', 'head': (0,0,0), 'tail': (0,0,0.2), 'parent': None}, {'name': 'Hand_L', 'head': tuple(arm_pose['wrist_L']), 'tail': tuple(arm_pose['hand_L']), 'parent': 'Root'}])\n"
                     "# Move armature into lowercase col_export to verify fallback armature export selection!\n"
                     "arm_o = bpy.data.objects['ARM_Asset']\n"
@@ -253,7 +270,7 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "scene.frame_set(1)\n"
                     f"exp = bt.export_and_verify_glb(scene, {json.dumps(str(glb_path))})\n"
                     "audit = bt.get_scene_audit(scene)\n"
-                    "print('__ORCH_JSON__:' + json.dumps({'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'body_mat_count': body_mat_count, 'head_x_span': head_x_span, 'hand_l_drift': hand_l_drift, 'hand_max_spread': hand_max_spread, 'arm_l_max_x': arm_l_max_x, 'arm_l_min_z': arm_l_min_z, 'cuff_gap_x': cuff_gap_x, 'skin_sss_scale': skin_sss_scale, 'hand_z_after': hand_z_after, 'sleeve_min_y': sleeve_min_y, 'skirt_min_z': min(skirt_zs), 'skirt_x_span': max(skirt_xs)-min(skirt_xs), 'skirt_y_span': max(skirt_ys)-min(skirt_ys), 'belt_names': [belt_res['belt_name'], belt_res['buckle_name']], 'scalp_x_span': max(scalp_xs)-min(scalp_xs), 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'integ_eye_occ_ok': integ_eye_occ['ok'], 'integ_eye_split_ok': integ_eye_split['ok'], 'integ_prim_hand_ok': integ_prim_hand['ok'], 'integ_bloated_skirt_ok': integ_bloated_skirt['ok'], 'integ_bad_prop_ok': integ_bad_prop['ok'], 'integ_bodice_split_ok': integ_bodice_split['ok'], 'backdrop_purged': backdrop_purged, 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'anim_poses_distinct': (r1 != r7 and r7 != r13 and lr1 != lr7), 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
+                    "print('__ORCH_JSON__:' + json.dumps({'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'body_mat_count': body_mat_count, 'head_x_span': head_x_span, 'hand_l_drift': hand_l_drift, 'hand_max_spread': hand_max_spread, 'arm_l_max_x': arm_l_max_x, 'arm_l_min_z': arm_l_min_z, 'stranded_fingertips': stranded_fingertips, 'plastron_min_y': plastron_min_y, 'leg_max_abs_x': leg_max_abs_x, 'rune_tex_ok': rune_tex_ok, 'cuff_gap_x': cuff_gap_x, 'skin_sss_scale': skin_sss_scale, 'hand_z_after': hand_z_after, 'sleeve_min_y': sleeve_min_y, 'skirt_min_z': min(skirt_zs), 'skirt_x_span': max(skirt_xs)-min(skirt_xs), 'skirt_y_span': max(skirt_ys)-min(skirt_ys), 'belt_names': [belt_res['belt_name'], belt_res['buckle_name']], 'scalp_x_span': max(scalp_xs)-min(scalp_xs), 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'integ_eye_occ_ok': integ_eye_occ['ok'], 'integ_eye_split_ok': integ_eye_split['ok'], 'integ_prim_hand_ok': integ_prim_hand['ok'], 'integ_bloated_skirt_ok': integ_bloated_skirt['ok'], 'integ_bad_prop_ok': integ_bad_prop['ok'], 'integ_bodice_split_ok': integ_bodice_split['ok'], 'integ_prim_obj_ok': integ_prim_obj['ok'], 'backdrop_purged': backdrop_purged, 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'anim_poses_distinct': (r1 != r7 and r7 != r13 and lr1 != lr7), 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
                 )
                 out = adapter.execute_blender_json(code, user_prompt="Test Base Mesh PoC", stage="test_base_mesh")["parsed"]
                 self.assertEqual(out["rot_deg"], 0.0)
@@ -265,6 +282,11 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                 self.assertLess(out["hand_max_spread"], 0.18)
                 self.assertLess(out["arm_l_max_x"], 0.34)
                 self.assertGreater(out["arm_l_min_z"], 0.90)
+                self.assertEqual(out["stranded_fingertips"], 0)
+                self.assertLess(out["plastron_min_y"], -0.09)
+                self.assertLessEqual(out["leg_max_abs_x"], 0.24)
+                self.assertTrue(out["rune_tex_ok"])
+                self.assertFalse(out["integ_prim_obj_ok"])
                 self.assertGreater(out["cuff_gap_x"], 0.004)
                 self.assertAlmostEqual(out["skin_sss_scale"], 0.008, delta=1e-4)
                 self.assertLess(out["hand_z_after"], 1.38)

@@ -8,6 +8,7 @@ curve-based hair, and hand grip helpers operate dynamically from mesh geometry i
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import math
 from pathlib import Path
@@ -336,6 +337,13 @@ def _get_arm_vertex_indices(obj: Any) -> dict[str, Any]:
         "sh_L": sh_l, "sh_R": sh_r, "el_L": el_l, "el_R": el_r,
         "wr_L": wr_l, "wr_R": wr_r,
     }
+    adj: list[list[int]] = [[] for _ in range(len(verts_pre))]
+    for e in mesh.edges:
+        v0, v1 = int(e.vertices[0]), int(e.vertices[1])
+        if v0 < len(verts_pre) and v1 < len(verts_pre):
+            adj[v0].append(v1)
+            adj[v1].append(v0)
+
     for s_tag, side_sign, sh_p, el_p, wr_p, hd_p in (
         ("L", 1.0, sh_l, el_l, wr_l, hd_l),
         ("R", -1.0, sh_r, el_r, wr_r, hd_r),
@@ -345,58 +353,48 @@ def _get_arm_vertex_indices(obj: Any) -> dict[str, Any]:
         elbow_set: set[int] = set()
         wrist_set: set[int] = set()
         sh_x_cut = max(0.082 * h, abs(sh_p.x) - 0.022)
-        hand_dir = hd_p - wr_p
-        if hand_dir.length < 1e-4:
-            hand_dir = (wr_p - el_p)
-        hand_dir = hand_dir.normalized() if hand_dir.length > 1e-4 else Vector((side_sign, 0.0, -0.5)).normalized()
-        tip_p = hd_p + hand_dir * 0.22
+        fore_dir = wr_p - el_p
+        if fore_dir.length < 1e-4:
+            fore_dir = hd_p - wr_p
+        fore_dir = fore_dir.normalized() if fore_dir.length > 1e-4 else Vector((side_sign, 0.0, -0.8)).normalized()
+        tip_p = wr_p + fore_dir * 0.28
 
         for idx, vp in enumerate(verts_pre):
-            if vp.x * side_sign < sh_x_cut or vp.z > neck_z + 0.02 or vp.z < hip_z * 0.45:
+            if vp.x * side_sign < sh_x_cut or vp.z > neck_z + 0.02 or vp.z < hip_z * 0.40:
                 continue
             d_up = _pt_seg_dist(vp, sh_p, el_p)
             d_lo = _pt_seg_dist(vp, el_p, tip_p)
             if d_up <= 0.120 or d_lo <= 0.165:
                 arm_set.add(idx)
 
-        # Edge-connectivity flood so all spread fingers / distal fingertips remain included
-        for _ in range(4):
-            added: list[int] = []
-            for e in mesh.edges:
-                v0, v1 = int(e.vertices[0]), int(e.vertices[1])
-                in0, in1 = v0 in arm_set, v1 in arm_set
-                if in0 != in1:
-                    cand = v1 if in0 else v0
-                    if cand < len(verts_pre):
-                        vp = verts_pre[cand]
-                        if vp.x * side_sign >= sh_x_cut and hip_z * 0.45 <= vp.z <= neck_z + 0.02:
-                            added.append(cand)
-            if not added:
-                break
-            arm_set.update(added)
+        # Full BFS edge-connectivity flood so 100% of distal finger/thumb vertices are captured
+        q_arm = deque(arm_set)
+        while q_arm:
+            cur = q_arm.popleft()
+            for nb in adj[cur]:
+                if nb not in arm_set:
+                    vp = verts_pre[nb]
+                    if vp.x * side_sign >= sh_x_cut and hip_z * 0.40 <= vp.z <= neck_z + 0.02:
+                        arm_set.add(nb)
+                        q_arm.append(nb)
 
         for idx in arm_set:
             vp = verts_pre[idx]
-            if (vp - wr_p).dot(hand_dir) >= -0.005 and (vp - hd_p).length <= 0.20:
+            if (vp - wr_p).dot(fore_dir) >= -0.005:
                 hand_set.add(idx)
             if (vp - el_p).length <= 0.048:
                 elbow_set.add(idx)
             if (vp - wr_p).length <= 0.036:
                 wrist_set.add(idx)
-        for _ in range(4):
-            h_added: list[int] = []
-            for e in mesh.edges:
-                v0, v1 = int(e.vertices[0]), int(e.vertices[1])
-                in0, in1 = v0 in hand_set, v1 in hand_set
-                if in0 != in1:
-                    cand = v1 if in0 else v0
-                    if cand in arm_set and cand < len(verts_pre):
-                        vp = verts_pre[cand]
-                        if (vp - wr_p).dot(hand_dir) >= -0.005 and (vp - hd_p).length <= 0.22:
-                            h_added.append(cand)
-            if not h_added:
-                break
-            hand_set.update(h_added)
+        q_hand = deque(hand_set)
+        while q_hand:
+            cur = q_hand.popleft()
+            for nb in adj[cur]:
+                if nb in arm_set and nb not in hand_set:
+                    vp = verts_pre[nb]
+                    if (vp - wr_p).dot(fore_dir) >= -0.005:
+                        hand_set.add(nb)
+                        q_hand.append(nb)
         out[f"arm_{s_tag}"] = arm_set
         out[f"hand_{s_tag}"] = hand_set
         out[f"elbow_{s_tag}"] = elbow_set
@@ -864,6 +862,7 @@ def extract_garment_from_body(
     col = collection or (body_obj.users_collection[0] if body_obj.users_collection else None)
 
     side_u = side.upper() if side else None
+    eff_x_abs_max = 0.22 if (side_u in ("L", "R") and x_abs_max is None) else x_abs_max
     verts_w, polys = _eval_mesh_world_verts(body_obj)
     arm_info = _get_arm_vertex_indices(body_obj)
     arm_all = arm_info["arm_L"] | arm_info["arm_R"]
@@ -880,7 +879,7 @@ def extract_garment_from_body(
             continue
         if side_u is None and y_min is None and y_max is None and abs(c.y - torso_cy) > 0.17:
             continue
-        if x_abs_max is not None and abs(c.x) > x_abs_max:
+        if eff_x_abs_max is not None and abs(c.x) > eff_x_abs_max:
             continue
         if x_abs_min is not None and abs(c.x) < x_abs_min:
             continue
@@ -945,9 +944,9 @@ def extract_garment_from_body(
         for v in bm.verts:
             if v.is_boundary:
                 if abs(v.co.z - z_max) < 0.025:
-                    v.co.z = v.co.z * 0.45 + float(z_max) * 0.55
+                    v.co.z = v.co.z * 0.15 + float(z_max) * 0.85
                 elif abs(v.co.z - z_min) < 0.025:
-                    v.co.z = v.co.z * 0.45 + float(z_min) * 0.55
+                    v.co.z = v.co.z * 0.15 + float(z_min) * 0.85
     all_bm_verts = list(bm.verts)
     if all_bm_verts:
         for _ in range(4):
@@ -962,6 +961,78 @@ def extract_garment_from_body(
         sw.wrap_mode = "OUTSIDE_SURFACE"
         sw.offset = max(0.002, float(surface_offset_m) * 0.5)
     bt.add_modifiers(obj, solidify=thickness_m, solidify_offset=1.0, solidify_even_offset=False, subsurf=subsurf)
+    bt.smart_uv_unwrap(obj)
+    return obj
+
+
+def create_chest_plastron_panel(
+    body_obj: Any,
+    name: str = "SM_Undershirt_Front",
+    *,
+    z_min: float | None = None,
+    z_max: float | None = None,
+    half_width: float = 0.068,
+    surface_offset_m: float = 0.017,
+    thickness_m: float = 0.004,
+    quilt_rows: int = 5,
+    collection: Any | None = None,
+) -> Any:
+    """Build a crisp torso-projected quilted front chest/corset panel cleanly outside the tunic bodice."""
+    _require_blender()
+    if body_obj is None or body_obj.type != "MESH" or body_obj.data is None:
+        raise ValueError("Expected MESH body_obj")
+    col = collection or (body_obj.users_collection[0] if body_obj.users_collection else None)
+    bt.remove_object_if_exists(name)
+
+    info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
+    lm = info["landmarks"]
+    wz = float(lm["waist"][2])
+    nz = float(lm["neck"][2])
+    zlo = float(z_min if z_min is not None else wz - 0.005)
+    zhi = float(z_max if z_max is not None else nz - 0.055)
+    if zhi <= zlo + 0.04:
+        zhi = zlo + 0.18
+
+    verts_w, _ = _eval_mesh_world_verts(body_obj)
+    arm_info = _get_arm_vertex_indices(body_obj)
+    arm_all = arm_info["arm_L"] | arm_info["arm_R"]
+    torso_front = [
+        verts_w[i]
+        for i in range(len(verts_w))
+        if i not in arm_all
+        and (zlo - 0.04) <= verts_w[i].z <= (zhi + 0.04)
+        and abs(verts_w[i].x) <= half_width + 0.045
+        and verts_w[i].y <= 0.02
+    ]
+    if not torso_front:
+        torso_front = [Vector((0.0, -0.09, 0.5 * (zlo + zhi)))]
+
+    nx, nzr = 9, 11
+    bm = bmesh.new()
+    grid: list[list[Any]] = []
+    for r in range(nzr):
+        t_z = r / (nzr - 1)
+        gz = zlo * (1.0 - t_z) + zhi * t_z
+        taper = 0.82 + 0.18 * (t_z ** 0.7)
+        quilt_rib = 0.0025 * abs(math.sin(math.pi * max(1, int(quilt_rows)) * t_z))
+        row_verts: list[Any] = []
+        for c_idx in range(nx):
+            fx = (2.0 * c_idx / (nx - 1)) - 1.0  # -1..+1
+            gx = fx * float(half_width) * taper
+            nearest = sorted(torso_front, key=lambda v: (v.x - gx) ** 2 + 1.4 * ((v.z - gz) ** 2))[:4]
+            fy = min(v.y for v in nearest)
+            edge_tuck = 0.002 if abs(fx) > 0.90 else 0.0
+            gy = fy - float(surface_offset_m) - quilt_rib + edge_tuck
+            row_verts.append(bm.verts.new(Vector((gx, gy, gz))))
+        grid.append(row_verts)
+
+    bm.verts.ensure_lookup_table()
+    for r in range(nzr - 1):
+        for c_idx in range(nx - 1):
+            bm.faces.new((grid[r][c_idx], grid[r][c_idx + 1], grid[r + 1][c_idx + 1], grid[r + 1][c_idx]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    obj = bt._finalize_bmesh_object(name, bm, collection=col, smooth=True, subsurf=0)
+    bt.add_modifiers(obj, solidify=thickness_m, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
     bt.smart_uv_unwrap(obj)
     return obj
 
@@ -1346,11 +1417,11 @@ def create_fitted_boots(
         tcx, tcy, trx, try_ = _band(shaft_top_z - 0.025, shaft_top_z + 0.025, 0.056, 0.064)
 
         sections = [
-            {"center": (fcx, fcy + 0.002, 0.000), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 0.98},
-            {"center": (fcx, fcy + 0.002, sole_thickness), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 0.98},
-            {"center": (fcx, fcy + 0.002, sole_thickness + 0.012), "rx": frx * 1.03, "ry": fry * 0.96, "squash_front": 1.03, "squash_back": 0.98},
-            {"center": (0.5 * (fcx + acx), fcy * 0.50 + acy * 0.50 + 0.004, 0.064), "rx": frx * 1.00, "ry": fry * 0.84, "squash_front": 1.04, "squash_back": 0.98},
-            {"center": (acx, acy + 0.003, ankle_z_est + 0.012), "rx": arx, "ry": ary + 0.004, "squash_front": 1.0, "squash_back": 0.98},
+            {"center": (fcx, fcy + 0.002, 0.000), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 1.08},
+            {"center": (fcx, fcy + 0.002, sole_thickness), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 1.08},
+            {"center": (fcx, fcy + 0.002, sole_thickness + 0.012), "rx": frx * 1.03, "ry": fry * 0.96, "squash_front": 1.03, "squash_back": 1.08},
+            {"center": (0.5 * (fcx + acx), fcy * 0.50 + acy * 0.50 + 0.004, 0.064), "rx": frx * 1.00, "ry": fry * 0.84, "squash_front": 1.04, "squash_back": 1.08},
+            {"center": (acx, acy + 0.003, ankle_z_est + 0.012), "rx": arx, "ry": ary + 0.004, "squash_front": 1.0, "squash_back": 1.08},
             {"center": (mcx, mcy, 0.5 * (ankle_z_est + shaft_top_z)), "rx": mrx, "ry": mry},
             {"center": (tcx, tcy, shaft_top_z), "rx": trx + 0.004, "ry": try_ + 0.004},
         ]
@@ -1825,19 +1896,24 @@ def build_layered_curve_hair(
     torso_back_pts = [v for v in verts_w if float(lm["waist"][2]) <= v.z <= neck_z and abs(v.x) <= 0.22]
     torso_back_y = max((v.y for v in torso_back_pts), default=0.11)
 
+    head_crown_pts = [v for v in head_pts if v.z > eye_z + 0.035]
+    skull_half_w = max(0.095, min(0.115, 0.5 * (max((v.x for v in head_crown_pts), default=0.19) - min((v.x for v in head_crown_pts), default=-0.19))))
+
     scalp_faces: set[int] = set()
     used_verts: set[int] = set()
     for pidx, p in enumerate(polys):
         c = p["center"]
-        if c.z < neck_z + 0.065 or abs(c.x) > 0.088 or c.z > head_top_z + 0.01:
+        if c.z < neck_z + 0.065 or c.z > head_top_z + 0.01:
+            continue
+        if abs(c.x) > skull_half_w + 0.004 and c.z < eye_z + 0.042:
             continue
         # Exclude face front below forehead AND pointed ears / lower jaw while covering temples + crown + rear skull
         if abs(c.x) <= 0.050 and c.y < head_cy - 0.02:
             is_crown = c.z > eye_z + 0.056
         else:
             is_crown = c.z > eye_z + 0.044
-        is_temple = abs(c.x) > 0.050 and c.z >= eye_z + 0.010 and c.y > head_cy - 0.042
-        is_back_skull = c.y > head_cy + 0.015
+        is_temple = abs(c.x) > 0.048 and abs(c.x) <= skull_half_w + 0.004 and c.z >= eye_z + 0.004 and c.y > head_cy - 0.052
+        is_back_skull = c.y > head_cy + 0.015 and abs(c.x) <= skull_half_w + 0.004
         if is_crown or is_temple or is_back_skull:
             scalp_faces.add(pidx)
             for vi in p["verts"]:
@@ -1899,7 +1975,7 @@ def build_layered_curve_hair(
     if auto_flowing_back:
         cfg = auto_flowing_back if isinstance(auto_flowing_back, dict) else {}
         length_m = float(cfg.get("length_m", 0.58))
-        lock_count = max(7, min(15, int(cfg.get("lock_count", 11))))
+        lock_count = max(7, min(15, int(cfg.get("lock_count", 13))))
         z_tip_base = max(0.56, head_top_z - length_m)
         y_clear = torso_back_y + 0.032
         for i in range(lock_count):
@@ -1908,33 +1984,33 @@ def build_layered_curve_hair(
             y_root = head_cy + 0.060 + (1.0 - abs(frac)) * 0.028
             z_root = head_top_z - 0.025 - abs(frac) * 0.055
             r_p = _snap_head(x_root, y_root, z_root, -0.004)
-            p_emerge = _snap_head(frac * 0.105, y_root + 0.020, z_root - 0.045, 0.014)
+            p_emerge = _snap_head(frac * 0.112, y_root + 0.020, z_root - 0.045, 0.014)
             z_upper = z_root * 0.65 + z_tip_base * 0.35 + 0.02 * (1.0 - abs(frac))
             y_upper = max(p_emerge[1] + 0.018, y_clear + 0.014 * (1.0 - abs(frac)))
-            x_upper = frac * 0.130
+            x_upper = frac * 0.148
             z_lower = z_root * 0.28 + z_tip_base * 0.72 + 0.03 * (1.0 - abs(frac))
             y_lower = max(y_upper + 0.008, y_clear + 0.024)
-            x_lower = frac * 0.155
-            z_tip = z_tip_base + (abs(frac) * 0.09) + (0.035 if i % 2 else 0.0)
-            x_tip = frac * 0.165
-            y_tip = max(y_lower + 0.006, y_clear + 0.030)
+            x_lower = frac * 0.178
+            z_tip = z_tip_base + (abs(frac) * 0.09) + (0.045 if i % 2 else 0.0)
+            x_tip = frac * 0.195
+            y_tip = max(y_lower + 0.006, y_clear + 0.032)
             prim_list.append(
                 {
                     "points": [r_p, p_emerge, (x_upper, y_upper, z_upper), (x_lower, y_lower, z_lower), (x_tip, y_tip, z_tip)],
-                    "radii": [0.22, 1.15, 1.25, 0.78, 0.05],
-                    "width_scale": 1.32 if abs(frac) < 0.5 else 1.12,
+                    "radii": [0.22, 1.18, 1.28, 0.78, 0.05],
+                    "width_scale": 1.35 if abs(frac) < 0.5 else 1.15,
                     "tilts_deg": [frac * 18.0, frac * 16.0, frac * 15.0, frac * 12.0, frac * 8.0],
                 }
             )
-        for j in range(6):
-            frac = (2.0 * j / 5.0) - 1.0
-            x_r = frac * 0.085
+        for j in range(8):
+            frac = (2.0 * j / 7.0) - 1.0
+            x_r = frac * 0.090
             p0 = _snap_head(x_r, head_cy + 0.075, head_top_z - 0.015, -0.003)
-            p_em = _snap_head(x_r * 1.12, head_cy + 0.095, head_top_z - 0.055, 0.016)
-            p1 = (frac * 0.125, y_clear + 0.030, head_top_z * 0.65 + z_tip_base * 0.35 + 0.04)
-            p2 = (frac * 0.145, y_clear + 0.038, head_top_z * 0.30 + z_tip_base * 0.70 + 0.04)
-            p3 = (frac * 0.155, y_clear + 0.044, z_tip_base + 0.05 + (j % 2) * 0.04)
-            sec_list.append({"points": [p0, p_em, p1, p2, p3], "radii": [0.22, 0.95, 1.05, 0.72, 0.05], "width_scale": 0.95})
+            p_em = _snap_head(x_r * 1.15, head_cy + 0.095, head_top_z - 0.055, 0.016)
+            p1 = (frac * 0.142, y_clear + 0.030, head_top_z * 0.65 + z_tip_base * 0.35 + 0.04)
+            p2 = (frac * 0.172, y_clear + 0.038, head_top_z * 0.30 + z_tip_base * 0.70 + 0.05)
+            p3 = (frac * 0.188, y_clear + 0.046, z_tip_base + 0.04 + (j % 3) * 0.045)
+            sec_list.append({"points": [p0, p_em, p1, p2, p3], "radii": [0.22, 0.98, 1.08, 0.72, 0.05], "width_scale": 0.98})
 
     if auto_side_locks:
         scfg = auto_side_locks if isinstance(auto_side_locks, dict) else {}
@@ -1983,8 +2059,8 @@ def build_layered_curve_hair(
         braid_list.append(
             {
                 "points": crown_pts,
-                "radius": float(bcfg.get("radius", 0.020)),
-                "twists": float(bcfg.get("twists", 9.0)),
+                "radius": float(bcfg.get("radius", 0.017)),
+                "twists": float(bcfg.get("twists", 12.0)),
             }
         )
 
@@ -2226,7 +2302,7 @@ def pose_arm_for_prop_hold(
             cur_wp = wp
             along = (wp - sh).dot(arm_dir)
             perp = ((wp - sh) - arm_dir * along).length
-            if along > -0.04 and perp < 0.13 and wp.z <= sh.z + 0.08:
+            if along > -0.04 and perp < 0.28 and wp.z <= sh.z + 0.08:
                 t = max(0.0, min(1.0, (along + 0.03) / 0.08))
                 w = t * t * (3.0 - 2.0 * t)
                 if w > 1e-4:
@@ -2347,6 +2423,8 @@ def audit_base_mesh_integrity(
         ):
             issues.append(f"Studio/backdrop object {o.name!r} must NOT be in {export_collection}.")
             continue
+        if any(o.name == p or o.name.startswith(p + ".") for p in ("Cube", "Cylinder", "Sphere", "Plane", "Torus", "Cone", "Icosphere")):
+            issues.append(f"Unnamed default primitive {o.name!r} must NOT remain in {export_collection}; use proper SM_* objects or painted textures.")
         eo = o.evaluated_get(deps)
         corners = [eo.matrix_world @ Vector(c) for c in eo.bound_box]
         zs = [c.z for c in corners]

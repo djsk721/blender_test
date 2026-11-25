@@ -1587,19 +1587,63 @@ def project_planar_uv(
 
 def create_painted_image_texture(
     name: str,
-    width: int,
-    height: int,
-    ops: list[dict[str, Any]],
+    width: int | None = None,
+    height: int | None = None,
+    ops: list[dict[str, Any]] | None = None,
     *,
+    size: int | None = None,
+    base_hex: str | None = None,
+    accent_hex: str | None = None,
+    pattern: str | None = None,
     base_color: tuple[float, float, float, float] = (0.5, 0.5, 0.5, 1.0),
     save_path: str | None = None,
     pack: bool = True,
+    **_: Any,
 ) -> Any:
     """Render a crisp procedural RGBA texture into a packed bpy.data.image using numpy."""
     _require_blender()
     if np is None:
         raise RuntimeError("numpy is required inside Blender for create_painted_image_texture.")
 
+    eff_w = int(width or size or 1024)
+    eff_h = int(height or size or eff_w)
+    if base_hex is not None:
+        lin_b = hex_to_linear(base_hex)
+        base_color = (lin_b[0], lin_b[1], lin_b[2], 1.0)
+    if ops is None:
+        pat = (pattern or "").strip().lower()
+        lin_acc = hex_to_linear(accent_hex or "#30E8FF")
+        a_soft = (lin_acc[0], lin_acc[1], lin_acc[2], 0.30)
+        a_main = (lin_acc[0], lin_acc[1], lin_acc[2], 1.0)
+        a_bright = (min(1.0, lin_acc[0] * 1.25 + 0.2), min(1.0, lin_acc[1] * 1.25 + 0.2), min(1.0, lin_acc[2] * 1.25 + 0.2), 1.0)
+        if pat in ("quilt", "weave"):
+            q_col = (min(1.0, base_color[0] * 0.78), min(1.0, base_color[1] * 0.78), min(1.0, base_color[2] * 0.78), 1.0)
+            ops = [
+                {"op": "line", "x0": 0.0, "y0": y, "x1": 1.0, "y1": y, "thickness": 0.012, "color": q_col}
+                for y in (0.16, 0.33, 0.50, 0.67, 0.84)
+            ] + [
+                {"op": "line", "x0": x, "y0": 0.0, "x1": x, "y1": 1.0, "thickness": 0.008, "color": q_col}
+                for x in (0.25, 0.50, 0.75)
+            ]
+        else:
+            # Default procedural Sheikah-style runic lens / ancient tech plate
+            frame_col = (min(1.0, base_color[0] + 0.06), min(1.0, base_color[1] + 0.07), min(1.0, base_color[2] + 0.09), 1.0)
+            ops = [
+                {"op": "rect", "x0": 0.05, "y0": 0.05, "x1": 0.95, "y1": 0.95, "feather": 0.02, "color": frame_col},
+                {"op": "rect", "x0": 0.10, "y0": 0.10, "x1": 0.90, "y1": 0.90, "feather": 0.015, "color": (*base_color[:3], 1.0)},
+                {"op": "radial_gradient", "cx": 0.50, "cy": 0.50, "rx": 0.34, "ry": 0.34, "inner_color": a_soft, "outer_color": (*lin_acc, 0.0)},
+                {"op": "ring", "cx": 0.50, "cy": 0.50, "rx": 0.28, "ry": 0.28, "thickness": 0.06, "feather": 0.025, "color": a_main},
+                {"op": "ring", "cx": 0.50, "cy": 0.50, "rx": 0.19, "ry": 0.19, "thickness": 0.05, "feather": 0.02, "color": a_main},
+                {"op": "ellipse", "cx": 0.50, "cy": 0.50, "rx": 0.085, "ry": 0.085, "feather": 0.04, "color": a_bright},
+                {"op": "line", "x0": 0.14, "y0": 0.50, "x1": 0.21, "y1": 0.50, "thickness": 0.014, "color": a_main},
+                {"op": "line", "x0": 0.79, "y0": 0.50, "x1": 0.86, "y1": 0.50, "thickness": 0.014, "color": a_main},
+                {"op": "line", "x0": 0.50, "y0": 0.80, "x1": 0.50, "y1": 0.88, "thickness": 0.014, "color": a_main},
+                {"op": "line", "x0": 0.50, "y0": 0.12, "x1": 0.50, "y1": 0.20, "thickness": 0.014, "color": a_main},
+                {"op": "polyline", "points": [(0.16, 0.76), (0.28, 0.76), (0.28, 0.86)], "thickness": 0.010, "color": a_soft},
+                {"op": "polyline", "points": [(0.84, 0.24), (0.72, 0.24), (0.72, 0.14)], "thickness": 0.010, "color": a_soft},
+            ]
+
+    width, height = eff_w, eff_h
     canvas = np.zeros((height, width, 4), dtype=np.float32)
     canvas[:, :, 0] = base_color[0]
     canvas[:, :, 1] = base_color[1]
@@ -2697,9 +2741,25 @@ def create_rig_and_bind(
         elif is_head_acc and len(mobj.data.vertices) > 0 and head_bone_name is not None:
             vg_map[head_bone_name].add(list(range(len(mobj.data.vertices))), 1.0, "REPLACE")
         else:
+            is_boot_or_cuff = "boot" in lname or "cuff" in lname
+            is_boot_cuff = "cuff" in lname
             for v in mobj.data.vertices:
                 wp = mat_w @ v.co
-                dists = [(bn, _pt_seg_dist(wp, bh, bt)) for (bn, bh, bt) in deform_bones]
+                bone_pool = deform_bones
+                if is_boot_or_cuff and deform_bones:
+                    side_tag_l = wp.x >= 0.0
+                    # Exclude opposite-side L/R leg/foot bones
+                    if side_tag_l:
+                        filtered = [b for b in deform_bones if not (b[0].startswith(("R_", "r_")) or b[0].lower().endswith(("_r", ".r")))]
+                    else:
+                        filtered = [b for b in deform_bones if not (b[0].startswith(("L_", "l_")) or b[0].lower().endswith(("_l", ".l")))]
+                    if is_boot_cuff:
+                        cuff_bones = [b for b in filtered if any(k in b[0].lower() for k in ("leg_lower", "shin", "calf"))]
+                        if cuff_bones:
+                            filtered = cuff_bones
+                    if filtered:
+                        bone_pool = filtered
+                dists = [(bn, _pt_seg_dist(wp, bh, bt)) for (bn, bh, bt) in bone_pool]
                 dists.sort(key=lambda x: x[1])
                 top = dists[:3]
                 weights = [(bn, 1.0 / ((d + 0.015) ** 3.0)) for (bn, d) in top]
