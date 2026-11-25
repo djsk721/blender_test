@@ -22,6 +22,15 @@ SKILL_STATUSES = (
     "NOT_VERIFIED",
 )
 
+SKILL_LIFECYCLE_STATES = (
+    "DISCOVERED",
+    "LOADED",
+    "APPLIED",
+    "VALIDATED",
+    "FAILED",
+    "NOT_VERIFIED",
+)
+
 
 @dataclass
 class SkillExecutionContract:
@@ -43,6 +52,15 @@ class SkillExecutionContract:
     evidence_files: dict[str, str] = field(default_factory=dict)
     verification_result: str = "NOT_VERIFIED"
     skill_md_sha256: str | None = None
+    lifecycle_state: str = "DISCOVERED"
+    lifecycle_history: list[str] = field(default_factory=lambda: ["DISCOVERED"])
+
+    def record_lifecycle(self, state: str) -> None:
+        if state not in SKILL_LIFECYCLE_STATES:
+            raise ValueError(f"Unsupported skill lifecycle state: {state}")
+        self.lifecycle_state = state
+        if not self.lifecycle_history or self.lifecycle_history[-1] != state:
+            self.lifecycle_history.append(state)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,30 +110,35 @@ def evaluate_skill_contract(
 
     if contract.status == "FAILED":
         contract.verification_result = "FAIL"
+        contract.record_lifecycle("FAILED")
         return contract
 
     if not contract.loaded:
         contract.status = "NOT_VERIFIED"
         contract.verification_result = "NOT_VERIFIED"
         contract.evaluation_notes = ["Skill SKILL.md was not loaded before execution evaluation."]
+        contract.record_lifecycle("NOT_VERIFIED")
         return contract
 
     if not contract.performed_operations:
         contract.status = "NOT_VERIFIED"
         contract.verification_result = "NOT_VERIFIED"
         contract.evaluation_notes = ["Skill was loaded but zero workflow operations were performed (loading != APPLIED)."]
+        contract.record_lifecycle("NOT_VERIFIED")
         return contract
 
     if not _has_real_evidence(contract):
         contract.status = "NOT_VERIFIED"
         contract.verification_result = "NOT_VERIFIED"
         contract.evaluation_notes = ["Missing real MCP/scene evidence or validation evidence."]
+        contract.record_lifecycle("NOT_VERIFIED")
         return contract
 
     if details.get("ai_3d_generators_used") or details.get("premade_assets_used"):
         contract.status = "FAILED"
         contract.verification_result = "FAIL"
         contract.evaluation_notes = ["Blender-Only Policy violation: external AI 3D generators or unauthorized premade assets used."]
+        contract.record_lifecycle("FAILED")
         return contract
 
     sid = contract.skill_id
@@ -317,12 +340,19 @@ def evaluate_skill_contract(
             contract.status = "APPLIED"
 
     contract.evaluation_notes = notes
+    if contract.loaded and "LOADED" not in contract.lifecycle_history:
+        contract.record_lifecycle("LOADED")
     if contract.status == "APPLIED":
         contract.verification_result = "PASS"
+        contract.record_lifecycle("APPLIED")
+        if contract.validation_evidence:
+            contract.record_lifecycle("VALIDATED")
     elif contract.status == "FAILED":
         contract.verification_result = "FAIL"
+        contract.record_lifecycle("FAILED")
     elif contract.status == "SKIPPED_WITH_REASON":
         contract.verification_result = "SKIPPED"
     else:
         contract.verification_result = "NOT_VERIFIED"
+        contract.record_lifecycle("NOT_VERIFIED")
     return contract
