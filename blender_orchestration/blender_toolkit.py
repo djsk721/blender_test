@@ -889,38 +889,59 @@ def build_stylized_head_base(
         cap_start=True,
         cap_end=True,
         smooth=True,
-        subsurf=2,
+        subsurf=0,
         collection=collection,
     )
+    # Apply Catmull-Clark level 2 BEFORE RBF facial sculpting so dense ~4,900 base vertices capture
+    # crisp nose bridge/tip, nostrils, lip cleft, chin, and orbital socket anatomy cleanly!
+    bm_h = bmesh.new()
+    bm_h.from_mesh(head_obj.data)
+    bmesh.ops.subdivide_edges(bm_h, edges=list(bm_h.edges), cuts=1, use_grid_fill=True, smooth=1.0)
+    bmesh.ops.subdivide_edges(bm_h, edges=list(bm_h.edges), cuts=1, use_grid_fill=True, smooth=1.0)
+    bmesh.ops.recalc_face_normals(bm_h, faces=list(bm_h.faces))
+    bm_h.to_mesh(head_obj.data)
+    bm_h.free()
+    head_obj.data.update()
+    set_smooth(head_obj, True)
 
-    # 2. Exact symmetric local-space Gaussian RBF sculpting (deep eye sockets, brow ridge, nose, clear lips, chin)
+    # 2. Crisp symmetric local-space Gaussian RBF sculpting snapped onto actual head front surface!
+    def _front_y_at(lx: float, lz: float, default_y: float) -> float:
+        best_y = default_y
+        best_d2 = 1e9
+        for v in head_obj.data.vertices:
+            if v.co.y < 0.0:
+                d2 = (v.co.x - lx) ** 2 + (v.co.z - lz) ** 2
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best_y = v.co.y
+        return best_y
+
     eye_x = 0.162 * h
-    eye_z = 0.022 * h
-    eye_y = -0.372 * h
+    eye_z = 0.026 * h
+    eye_y = -0.348 * h  # seated slightly deeper inside orbital socket so eyeballs never bulge!
     sculpt_cps = [
         # Deep recessed orbital sockets (exact mirror_x in local space!)
-        {"center": (eye_x, -0.402 * h, eye_z), "radius": 0.125 * h, "delta": (0.0, 0.078 * h, 0.0), "mirror_x": True},
+        {"center": (eye_x, _front_y_at(eye_x, eye_z, -0.40 * h), eye_z), "radius": 0.106 * h, "delta": (0.0, 0.068 * h, 0.0), "mirror_x": True},
         # Inner orbital corner recess
-        {"center": (eye_x * 0.55, -0.415 * h, eye_z + 0.01 * h), "radius": 0.072 * h, "delta": (0.0, 0.038 * h, 0.0), "mirror_x": True},
+        {"center": (eye_x * 0.55, _front_y_at(eye_x * 0.55, eye_z + 0.01 * h, -0.41 * h), eye_z + 0.01 * h), "radius": 0.060 * h, "delta": (0.0, 0.032 * h, 0.0), "mirror_x": True},
         # Gentle brow ridge above eye
-        {"center": (eye_x * 0.92, -0.425 * h, eye_z + 0.125 * h), "radius": 0.095 * h, "delta": (0.0, -0.028 * h, 0.008 * h), "mirror_x": True},
+        {"center": (eye_x * 0.92, _front_y_at(eye_x * 0.92, eye_z + 0.118 * h, -0.41 * h), eye_z + 0.118 * h), "radius": 0.085 * h, "delta": (0.0, -0.020 * h, 0.005 * h), "mirror_x": True},
         # Soft stylized cheekbones below outer eye
-        {"center": (0.245 * h, -0.335 * h, -0.088 * h), "radius": 0.125 * h, "delta": (0.015 * h, -0.028 * h, 0.005 * h), "mirror_x": True},
-        # Refined stylized nose bridge & crisp delicate tip (clearly readable in 3/4 and profile clay!)
-        {"center": (0.0, -0.425 * h, -0.015 * h), "radius": 0.056 * h, "delta": (0.0, -0.052 * h, 0.002 * h)},
-        {"center": (0.0, -0.435 * h, -0.102 * h), "radius": 0.054 * h, "delta": (0.0, -0.082 * h, -0.005 * h)},
+        {"center": (0.245 * h, _front_y_at(0.245 * h, -0.095 * h, -0.33 * h), -0.095 * h), "radius": 0.110 * h, "delta": (0.014 * h, -0.020 * h, 0.004 * h), "mirror_x": True},
+        # Petite anime nose bridge & delicate pointed tip snapped strictly onto front mesh surface
+        {"center": (0.0, _front_y_at(0.0, -0.025 * h, -0.41 * h), -0.025 * h), "radius": 0.030 * h, "delta": (0.0, -0.026 * h, 0.002 * h)},
+        {"center": (0.0, _front_y_at(0.0, -0.098 * h, -0.40 * h), -0.098 * h), "radius": 0.028 * h, "delta": (0.0, -0.048 * h, -0.002 * h)},
         # Subtle nose wings
-        {"center": (0.048 * h, -0.405 * h, -0.112 * h), "radius": 0.036 * h, "delta": (0.010 * h, -0.025 * h, 0.0), "mirror_x": True},
-        # Defined sculpted upper lip, mouth parting line, and fuller lower lip (legible even in clay!)
-        {"center": (0.0, -0.400 * h, -0.180 * h), "radius": 0.042 * h, "delta": (0.0, 0.018 * h, 0.0)},
-        {"center": (0.0, -0.405 * h, -0.218 * h), "radius": 0.072 * h, "delta": (0.0, -0.052 * h, 0.007 * h)},
-        {"center": (0.0, -0.398 * h, -0.246 * h), "radius": 0.062 * h, "delta": (0.0, 0.032 * h, 0.0)},
-        {"center": (0.0, -0.390 * h, -0.278 * h), "radius": 0.070 * h, "delta": (0.0, -0.050 * h, -0.005 * h)},
-        # Soft mouth corner dimples
-        {"center": (0.074 * h, -0.372 * h, -0.244 * h), "radius": 0.038 * h, "delta": (0.0, 0.020 * h, 0.004 * h), "mirror_x": True},
-        # Chin groove & soft rounded chin
-        {"center": (0.0, -0.345 * h, -0.342 * h), "radius": 0.060 * h, "delta": (0.0, 0.028 * h, 0.0)},
-        {"center": (0.0, -0.315 * h, -0.415 * h), "radius": 0.078 * h, "delta": (0.0, -0.030 * h, -0.006 * h)},
+        {"center": (0.038 * h, _front_y_at(0.038 * h, -0.108 * h, -0.39 * h), -0.108 * h), "radius": 0.024 * h, "delta": (0.008 * h, -0.014 * h, 0.0), "mirror_x": True},
+        # Clean philtrum, delicate upper lip, crisp recessed mouth parting cleft, soft lower lip (all surface-snapped!)
+        {"center": (0.0, _front_y_at(0.0, -0.175 * h, -0.36 * h), -0.175 * h), "radius": 0.028 * h, "delta": (0.0, 0.012 * h, 0.0)},
+        {"center": (0.0, _front_y_at(0.0, -0.212 * h, -0.35 * h), -0.212 * h), "radius": 0.034 * h, "delta": (0.0, -0.020 * h, 0.003 * h)},
+        {"center": (0.0, _front_y_at(0.0, -0.238 * h, -0.34 * h), -0.238 * h), "radius": 0.034 * h, "delta": (0.0, 0.026 * h, 0.0)},
+        {"center": (0.040 * h, _front_y_at(0.040 * h, -0.238 * h, -0.33 * h), -0.238 * h), "radius": 0.028 * h, "delta": (0.0, 0.018 * h, 0.0), "mirror_x": True},
+        {"center": (0.0, _front_y_at(0.0, -0.268 * h, -0.32 * h), -0.268 * h), "radius": 0.036 * h, "delta": (0.0, -0.024 * h, -0.002 * h)},
+        # Chin groove & soft rounded anime chin
+        {"center": (0.0, _front_y_at(0.0, -0.335 * h, -0.29 * h), -0.335 * h), "radius": 0.044 * h, "delta": (0.0, 0.020 * h, 0.0)},
+        {"center": (0.0, _front_y_at(0.0, -0.415 * h, -0.24 * h), -0.415 * h), "radius": 0.068 * h, "delta": (0.0, -0.022 * h, -0.005 * h)},
     ]
     sculpt_stats = deform_mesh_sculpt(head_obj, sculpt_cps)
 
@@ -1067,16 +1088,24 @@ def build_stylized_head_base(
             [0.048 * h, 0.036 * h, 0.022 * h, 0.010 * h],
             arch=0.45,
             up_hint=(0.0, -1.0, 0.0),
-            subsurf=1,
+            subsurf=0,
             collection=collection,
         )
+        bm_e = bmesh.new()
+        bm_e.from_mesh(ear_obj.data)
+        bmesh.ops.subdivide_edges(bm_e, edges=list(bm_e.edges), cuts=1, use_grid_fill=True, smooth=0.6)
+        bmesh.ops.recalc_face_normals(bm_e, faces=list(bm_e.faces))
+        bm_e.to_mesh(ear_obj.data)
+        bm_e.free()
+        ear_obj.data.update()
+        set_smooth(ear_obj, True)
         deform_mesh_sculpt(
             ear_obj,
             [
                 {
-                    "center": (sx * (0.41 * h + el * 0.30), 0.025 * h, 0.010 * h),
-                    "radius": 0.065 * h,
-                    "delta": (0.0, 0.022 * h, 0.0),
+                    "center": (sx * (0.41 * h + el * 0.30), 0.020 * h, 0.008 * h),
+                    "radius": 0.068 * h,
+                    "delta": (0.0, 0.028 * h, 0.0),
                 }
             ],
         )
@@ -1158,23 +1187,23 @@ def build_articulated_arm_chain(
     u_dir = u_vec.normalized()
     f_dir = f_vec.normalized()
 
-    # 1. Upper sleeve / upper arm smoothly anchored into torso and overlapping cleanly around the elbow bend!
+    # 1. Upper sleeve / upper arm smoothly anchored into torso and tapering cleanly inside the elbow cuff!
     inward = Vector((-1.0 if side.upper() == "L" else 1.0, 0.0, 0.0))
-    sh_anchor = sh + inward * 0.032 - u_dir * 0.012
+    sh_anchor = sh + inward * 0.042 - u_dir * 0.014
     u_pts = [
         tuple(sh_anchor),
-        tuple(sh),
+        tuple(sh + inward * 0.010),
         tuple(sh.lerp(el, 0.35)),
-        tuple(sh.lerp(el, 0.74)),
-        tuple(el + u_dir * 0.014),
+        tuple(sh.lerp(el, 0.75)),
+        tuple(el - u_dir * 0.004),
     ]
     r_sh, r_mid, r_el = float(upper_radii[0]), float(upper_radii[1]), float(upper_radii[2])
     u_rads = [
-        (r_sh * 0.88, r_sh * 0.86),
-        (r_sh * 1.02, r_sh * 0.96),
+        (r_sh * 0.92, r_sh * 0.88),
+        (r_sh * 0.98, r_sh * 0.92),
         (r_mid * 1.00, r_mid * 0.95),
-        (r_el * 1.05, r_el * 1.02),
-        (r_el * 1.02, r_el * 1.00),
+        (r_el * 1.02, r_el * 0.98),
+        (r_el * 0.82, r_el * 0.80),
     ]
     upper_obj = build_continuous_limb(
         f"{name_prefix}_UpperArm_{side}",
@@ -1188,17 +1217,17 @@ def build_articulated_arm_chain(
     smart_uv_unwrap(upper_obj)
     created = [upper_obj.name]
 
-    # 2. Forearm / undersleeve cleanly embedded INSIDE the elbow along elbow -> wrist (zero mechanical socket gap!)
+    # 2. Forearm / undersleeve cleanly rooted INSIDE the elbow cuff along elbow -> wrist (zero ball-joint protrusion!)
     r_f0, r_f1 = float(forearm_radii[0]), float(forearm_radii[1])
     f_pts = [
-        tuple(el - f_dir * 0.026),
-        tuple(el + f_dir * 0.022),
+        tuple(el + f_dir * 0.006),
+        tuple(el + f_dir * 0.036),
         tuple(el.lerp(wr, 0.55)),
         tuple(wr + f_dir * 0.012),
     ]
     f_rads = [
-        (r_f0 * 0.96, r_f0 * 0.96),
-        (r_f0 * 1.02, r_f0 * 0.96),
+        (r_f0 * 0.84, r_f0 * 0.82),
+        (r_f0 * 0.98, r_f0 * 0.94),
         ((r_f0 + r_f1) * 0.50, (r_f0 + r_f1) * 0.46),
         (r_f1 * 1.00, r_f1 * 0.88),
     ]
@@ -1214,18 +1243,20 @@ def build_articulated_arm_chain(
     smart_uv_unwrap(forearm_obj)
     created.append(forearm_obj.name)
 
-    # 3. Optional turned-back cuff collar hugging elbow cleanly along forearm axis
+    # 3. Seamless elbow cuff collar funnel concealing elbow bend cleanly
     cuff_name = None
     if cuff_flare > 0.0 and cuff_length > 0.0:
+        elbow_mid = (u_dir - f_dir)
+        c_dir = f_dir
         c_pts = [
-            tuple(el - f_dir * (cuff_length * 0.25)),
-            tuple(el + f_dir * (cuff_length * 0.35)),
-            tuple(el + f_dir * (cuff_length * 0.95)),
+            tuple(el - c_dir * (cuff_length * 0.22)),
+            tuple(el + c_dir * (cuff_length * 0.25)),
+            tuple(el + c_dir * (cuff_length * 0.95)),
         ]
         c_rads = [
-            (r_el + cuff_flare * 0.55, r_el + cuff_flare * 0.55),
-            (r_el + cuff_flare * 1.05, r_el + cuff_flare * 1.00),
-            (r_f0 + cuff_flare * 0.45, r_f0 + cuff_flare * 0.42),
+            (r_el * 0.96, r_el * 0.94),
+            (r_el + cuff_flare * 0.85, r_el + cuff_flare * 0.82),
+            (r_f0 + cuff_flare * 0.55, r_f0 + cuff_flare * 0.52),
         ]
         cuff_obj = create_tube_along_curve(
             f"{name_prefix}_Cuff_{side}",
@@ -1939,6 +1970,38 @@ def get_scene_audit(scene: Any, *, export_collection: str = "COL_Export") -> dic
     }
 
 
+def _min_free_gpu_vram_mib() -> int | None:
+    """Return max free GPU VRAM in MiB across visible NVIDIA GPUs (None if nvidia-smi unavailable)."""
+    import subprocess
+    for exe in ("nvidia-smi", "/usr/bin/nvidia-smi"):
+        try:
+            out = subprocess.check_output(
+                [exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                text=True,
+                timeout=3.0,
+            )
+            vals = [int(line.strip()) for line in out.splitlines() if line.strip().isdigit()]
+            if vals:
+                return max(vals)
+        except Exception:
+            continue
+    return None
+
+
+def _switch_cycles_to_cpu(scene: Any) -> str:
+    scene.cycles.device = "CPU"
+    try:
+        scene.cycles.denoiser = "OPENIMAGEDENOISE"
+    except Exception:
+        pass
+    try:
+        prefs = bpy.context.preferences.addons["cycles"].preferences
+        prefs.compute_device_type = "NONE"
+    except Exception:
+        pass
+    return "CPU"
+
+
 def _configure_render_engine(scene: Any, *, res: tuple[int, int], samples: int, use_gpu: bool = True) -> str:
     scene.render.engine = "CYCLES"
     scene.render.resolution_x = int(res[0])
@@ -1965,6 +2028,11 @@ def _configure_render_engine(scene: Any, *, res: tuple[int, int], samples: int, 
         scene.view_settings.view_transform = "Standard"
     scene.view_settings.exposure = 0.0
 
+    free_mib = _min_free_gpu_vram_mib() if use_gpu else 0
+    if use_gpu and (free_mib is None or free_mib < 6000):
+        # Yield GPU cleanly to host workloads (e.g. Strata reserving 4096 MiB) rather than triggering CUDA/OptiX OOM!
+        return _switch_cycles_to_cpu(scene)
+
     effective = "CPU"
     if use_gpu:
         try:
@@ -1978,6 +2046,10 @@ def _configure_render_engine(scene: Any, *, res: tuple[int, int], samples: int, 
                         for d in prefs.devices:
                             d.use = (d.type == backend)
                         scene.cycles.device = "GPU"
+                        try:
+                            scene.cycles.denoiser = "OPTIX" if backend == "OPTIX" else "OPENIMAGEDENOISE"
+                        except Exception:
+                            pass
                         effective = f"GPU:{backend}"
                         break
                 except Exception:
@@ -1985,7 +2057,7 @@ def _configure_render_engine(scene: Any, *, res: tuple[int, int], samples: int, 
         except Exception:
             pass
     if effective == "CPU":
-        scene.cycles.device = "CPU"
+        return _switch_cycles_to_cpu(scene)
     return effective
 
 
@@ -2268,7 +2340,15 @@ def render_standard_views(
             cam_obj.rotation_euler = (tgt - pos).to_track_quat("-Z", "Y").to_euler()
             fpath = out_path / f"{prefix}_{vname}.png"
             scene.render.filepath = str(fpath)
-            bpy.ops.render.render(write_still=True, scene=scene.name)
+            try:
+                bpy.ops.render.render(write_still=True, scene=scene.name)
+            except RuntimeError as r_exc:
+                msg = str(r_exc).lower()
+                if "memory" in msg or "cuda" in msg or "optix" in msg or "device" in msg:
+                    engine_device = _switch_cycles_to_cpu(scene)
+                    bpy.ops.render.render(write_still=True, scene=scene.name)
+                else:
+                    raise
             rendered.append(
                 {
                     "view": vname,
@@ -2307,28 +2387,64 @@ def create_rig_and_bind(
 ) -> dict[str, Any]:
     """Create a clean hierarchical armature from bone specs and bind smooth inverse-distance weights."""
     _require_blender()
+    if bpy.context.window and bpy.context.window.scene != scene:
+        bpy.context.window.scene = scene
     remove_object_if_exists(armature_name)
     rcol = get_or_create_collection(scene, rig_collection)
+    rcol.hide_viewport = False
+    rcol.hide_render = False
+
+    def _unexclude_col(layer_col: Any, target_name: str) -> None:
+        if layer_col.collection.name == target_name:
+            layer_col.exclude = False
+            layer_col.hide_viewport = False
+        for ch in layer_col.children:
+            _unexclude_col(ch, target_name)
+
+    for vl in scene.view_layers:
+        _unexclude_col(vl.layer_collection, rig_collection)
+
     arm_data = bpy.data.armatures.new(armature_name + "_Data")
     arm_obj = bpy.data.objects.new(armature_name, arm_data)
     rcol.objects.link(arm_obj)
+    arm_obj.hide_viewport = False
+    arm_obj.hide_render = False
+    try:
+        arm_obj.hide_set(False)
+    except Exception:
+        pass
 
-    bpy.context.view_layer.objects.active = arm_obj
-    bpy.ops.object.mode_set(mode="EDIT")
-    edit_bones: dict[str, Any] = {}
-    for bs in bone_specs:
-        eb = arm_data.edit_bones.new(str(bs["name"]))
-        eb.head = Vector(bs["head"])
-        eb.tail = Vector(bs["tail"])
-        if (eb.tail - eb.head).length < 1e-4:
-            eb.tail = eb.head + Vector((0.0, 0.0, 0.05))
-        eb.use_deform = bool(bs.get("deform", True))
-        edit_bones[eb.name] = eb
-    for bs in bone_specs:
-        p = bs.get("parent")
-        if p and p in edit_bones:
-            edit_bones[str(bs["name"])].parent = edit_bones[p]
-    bpy.ops.object.mode_set(mode="OBJECT")
+    vl = scene.view_layers[0] if scene.view_layers else bpy.context.view_layer
+    try:
+        if bpy.context.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+    except Exception:
+        pass
+    for o in vl.objects:
+        try:
+            o.select_set(False)
+        except Exception:
+            pass
+    vl.objects.active = arm_obj
+    arm_obj.select_set(True)
+    vl.update()
+
+    with bpy.context.temp_override(scene=scene, view_layer=vl, active_object=arm_obj, object=arm_obj):
+        bpy.ops.object.mode_set(mode="EDIT")
+        edit_bones: dict[str, Any] = {}
+        for bs in bone_specs:
+            eb = arm_data.edit_bones.new(str(bs["name"]))
+            eb.head = Vector(bs["head"])
+            eb.tail = Vector(bs["tail"])
+            if (eb.tail - eb.head).length < 1e-4:
+                eb.tail = eb.head + Vector((0.0, 0.0, 0.05))
+            eb.use_deform = bool(bs.get("deform", True))
+            edit_bones[eb.name] = eb
+        for bs in bone_specs:
+            p = bs.get("parent")
+            if p and p in edit_bones:
+                edit_bones[str(bs["name"])].parent = edit_bones[p]
+        bpy.ops.object.mode_set(mode="OBJECT")
 
     deform_bones = [
         (b["name"], Vector(b["head"]), Vector(b["tail"]))
@@ -2543,3 +2659,54 @@ def export_and_verify_glb(
         "reimport_armature_count": reimport_armatures,
         "reimport_error": reimport_error,
     }
+
+
+def collect_resource_snapshot() -> dict[str, Any]:
+    """Collect lightweight GPU VRAM/temperature/utilization and system RAM metrics."""
+    import os
+    import subprocess
+
+    snap: dict[str, Any] = {"gpus": [], "min_free_vram_mib": None, "ram_available_mib": None, "ram_total_mib": None}
+    for exe in ("nvidia-smi", "/usr/bin/nvidia-smi"):
+        try:
+            out = subprocess.check_output(
+                [
+                    exe,
+                    "--query-gpu=index,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                text=True,
+                timeout=3.0,
+            )
+            gpus = []
+            for line in out.splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 7:
+                    gpus.append(
+                        {
+                            "index": int(parts[0]),
+                            "name": parts[1],
+                            "vram_total_mib": int(parts[2]),
+                            "vram_used_mib": int(parts[3]),
+                            "vram_free_mib": int(parts[4]),
+                            "temp_c": int(parts[5]),
+                            "util_pct": int(parts[6]),
+                        }
+                    )
+            if gpus:
+                snap["gpus"] = gpus
+                snap["min_free_vram_mib"] = min(g["vram_free_mib"] for g in gpus)
+                break
+        except Exception:
+            continue
+
+    meminfo = Path("/proc/meminfo")
+    if meminfo.is_file():
+        for line in meminfo.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("MemTotal:"):
+                snap["ram_total_mib"] = int(line.split()[1]) // 1024
+            elif line.startswith("MemAvailable:"):
+                snap["ram_available_mib"] = int(line.split()[1]) // 1024
+    if os.path.exists("/dev/nvidia0"):
+        snap["nvml_device_present"] = True
+    return snap

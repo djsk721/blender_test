@@ -16,6 +16,7 @@ mcp/blender/backups/
 *.blend
 *.blend1
 *.blend2
+*.zip
 *.fbx
 *.glb
 *.gltf

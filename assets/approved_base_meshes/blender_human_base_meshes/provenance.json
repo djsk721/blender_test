@@ -1,0 +1,25 @@
+{
+  "manifest_version": "1.0",
+  "bundle_id": "blender-human-base-meshes-v1.0.0",
+  "publisher": "Blender Foundation / Blender Studio",
+  "official_source_page": "https://www.blender.org/download/demo-files/",
+  "source_url": "https://download.blender.org/demo/bundles/bundles-3.6/human-base-meshes-bundle-v1.0.0.zip",
+  "license": "CC0-1.0",
+  "bundle_version": "1.0.0",
+  "blender_version_verified": "5.3.0",
+  "generic_starting_mesh_confirmed": true,
+  "finished_character_prohibited": true,
+  "files": {
+    "archive_zip": {
+      "rel_path": "human-base-meshes-bundle-v1.0.0.zip",
+      "bytes": 34586814,
+      "sha256": "46a912c0524072ac3b78c35d5d2471df7b8df102394a050ca8cd7184e3393648"
+    },
+    "blend_library": {
+      "rel_path": "human_base_meshes_bundle.blend",
+      "bytes": 62506480,
+      "sha256": "660e245812ef56768bc71293bd4c8bc1fd19a63710e16aafc8258a7351cbc35e"
+    }
+  },
+  "loading_mechanism": "native bpy.data.libraries.load via Blender MCP (allow_external_assets remains False for external web/asset stores)"
+}

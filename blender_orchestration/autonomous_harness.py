@@ -25,16 +25,20 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from .blender_toolkit import collect_resource_snapshot
 from .contracts import SkillExecutionContract, evaluate_skill_contract
-from .mcp_adapter import MCPAdapter, MCPAdapterError, StdioMCPTransport
+from .mcp_adapter import MCPAdapter, MCPAdapterError, StdioMCPTransport, verify_approved_base_mesh_manifest
 from .multimodal_qa import _extract_json_object, parse_opencode_json_events
 from .rubric_evaluator import (
     DEFAULT_LIGHT_MODEL_ID,
     ISOLATED_NO_MCP_OPENCODE_CONFIG,
+    QWEN_FLASH_NEXT_MODEL_ID,
     BlindRubricEvaluator,
     StageVisualReviewer,
+    build_isolated_opencode_env,
     compose_review_sheets,
     detect_quota_error,
+    verify_model_id_lock,
 )
 
 
@@ -91,6 +95,23 @@ Reusable general-purpose `bt.*` helpers (100% Blender 5.3 compatible):
 20. `bt.build_stylized_head_base(name_prefix, center, height=0.22, jaw_taper=0.72, eye_scale=1.0, ear_style='pointed', ear_length=0.055, head_tilt_deg=(0,0,0), collection=col_export)`
     - ALWAYS use this for character heads! Sculpted in exact symmetric local space BEFORE applying `head_tilt_deg`: deep eye sockets, seated eyeballs, eyeball-hugging almond upper/lower lids, sculpted nose/lips/chin, 3D brows, ears, AND returns exact `uv_landmarks` + `landmarks_world`!
 21. `bt.create_rig_and_bind(scene, bone_specs, target_meshes=None, armature_name="ARM_Asset")` / `bt.create_cycle_animation(armature_obj, keyframe_specs, action_name="ACT_Cycle", frame_start=1, frame_end=24)`
+"""
+
+BASE_MESH_API_CHEATSHEET = """
+Available inside Blender (`import blender_orchestration.base_mesh_ops as bmo`, `import blender_orchestration.blender_toolkit as bt`, `import bpy, math`, `from mathutils import Vector`):
+Pre-bound globals: `SCENE_NAME`, `scene`, `col_export`, `col_rig`, `OUT_DIR`, `BASE_MESH_MANIFEST`.
+Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground is `z = 0.0`.
+1. `bmo.verify_and_load_base_mesh(scene, BASE_MESH_MANIFEST, object_name, target_height_m=1.65, collection=col_export, new_name="SM_BaseBody")`
+   - Verifies SHA-256 provenance, loads approved Human Base Mesh natively, grounds `min_z=0.0`, faces `-Y`, creates `ANAT_*` groups, returns `{"object": obj, "landmarks": {"landmarks": {...}}}`.
+2. `bmo.inspect_anatomical_regions(body_obj)` -> returns verified anatomical landmark coordinates (`neck`, `head_center`, `eye_L`, `eye_R`, `ear_L`, `ear_R`, `shoulder_L/R`, `waist`, `hips`, `elbow_L/R`, `wrist_L/R`, `hand_L/R`, `knee_L/R`, `ankle_L/R`, `foot_L/R`).
+3. `bmo.apply_semantic_stylization(body_obj, controls)`
+   - Controls (clamped): `head_scale`, `eye_size`, `eye_separation`, `jaw_width`, `chin_length`, `nose_size`, `ear_pointedness`, `shoulder_width`, `waist_taper`, `hip_width`, `torso_length`, `limb_slenderness`, `hand_scale`, `neck_length`.
+4. `bmo.extract_garment_from_body(body_obj, name, z_min=..., z_max=..., x_abs_max=None, y_min=None, y_max=None, surface_offset_m=0.008, thickness_m=0.004, bottom_flare=0.0, top_collar_flare=0.0, add_shrinkwrap=False, subsurf=1, collection=col_export)`
+   - Creates body-conforming garments directly from body faces with Solidify/Subsurf and zero floating panels!
+5. `bmo.build_layered_curve_hair(name_prefix, body_obj, scalp_offset_m=0.011, scalp_thickness_m=0.014, primary_locks=[{"points":[...], "radii":[...], "tilts_deg":[...], "width_scale":1.0}], secondary_locks=[...], braid_paths=[{"points":[...], "radius":0.014, "twists":7.0}], collection=col_export)`
+   - Builds fitted scalp volume cap + sculpted Bezier curve locks + braids as manifold UV meshes (no rope tubes/spikes).
+6. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)`
+7. Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
 """
 
 
@@ -169,6 +190,7 @@ def _invoke_agent_cli(
     t0 = time.monotonic()
     try:
         with tempfile.TemporaryDirectory(prefix="oc_agent_isolated_") as tmpdir:
+            iso_env = build_isolated_opencode_env(tmpdir)
             (Path(tmpdir) / "opencode.json").write_text(
                 json.dumps(ISOLATED_NO_MCP_OPENCODE_CONFIG, indent=2),
                 encoding="utf-8",
@@ -176,6 +198,7 @@ def _invoke_agent_cli(
             res = subprocess.run(
                 cmd,
                 cwd=tmpdir,
+                env=iso_env,
                 capture_output=True,
                 text=True,
                 timeout=timeout_sec,
@@ -219,6 +242,7 @@ class AutonomousBlenderHarness:
         self,
         *,
         model_id: str = DEFAULT_LIGHT_MODEL_ID,
+        expected_model_id: str | None = None,
         project_root: Path | None = None,
         blender_port: int = 9878,
         runtime_dir: Path | None = None,
@@ -232,7 +256,8 @@ class AutonomousBlenderHarness:
         stage_reviewer: StageVisualReviewer | None = None,
         final_evaluator: BlindRubricEvaluator | None = None,
     ) -> None:
-        self.model_id = model_id
+        self.model_id = verify_model_id_lock(model_id, expected_model_id)
+        self.expected_model_id = expected_model_id
         self.project_root = Path(project_root) if project_root else PROJECT_ROOT
         self.blender_port = int(blender_port)
         self.runtime_dir = Path(runtime_dir) if runtime_dir else (self.project_root / "output" / "autonomous_harness" / "_mcp_runtime")
@@ -300,18 +325,24 @@ class AutonomousBlenderHarness:
         stage_label: str,
         user_prompt: str,
         fallback_checkpoint: Path | None = None,
+        base_mesh_manifest: Path | None = None,
     ) -> dict[str, Any]:
         """Execute agent-authored bpy code inside Blender via MCP with automatic checkpoint recovery."""
         ckpt_str = str(fallback_checkpoint) if (fallback_checkpoint and fallback_checkpoint.is_file()) else ""
+        manifest_str = str(Path(base_mesh_manifest).resolve()) if base_mesh_manifest else ""
         wrapper = (
-            "import json, math, sys, traceback\n"
+            "import importlib, json, math, sys, traceback\n"
             f"if {json.dumps(str(self.project_root))} not in sys.path:\n"
             f"    sys.path.insert(0, {json.dumps(str(self.project_root))})\n"
             "import bpy, bmesh\n"
             "from mathutils import Vector, Euler, Matrix\n"
             "from blender_orchestration import blender_toolkit as bt\n"
+            "from blender_orchestration import base_mesh_ops as bmo\n"
+            "bt = importlib.reload(bt)\n"
+            "bmo = importlib.reload(bmo)\n"
             f"SCENE_NAME = {json.dumps(scene_name)}\n"
             f"OUT_DIR = {json.dumps(str(out_dir))}\n"
+            f"BASE_MESH_MANIFEST = {json.dumps(manifest_str)}\n"
             f"_CKPT = {json.dumps(ckpt_str)}\n"
             "if SCENE_NAME not in bpy.data.scenes:\n"
             "    if _CKPT:\n"
@@ -327,9 +358,9 @@ class AutonomousBlenderHarness:
             "col_studio = bt.get_or_create_collection(scene, 'COL_Studio')\n"
             "_user_code = " + json.dumps(agent_code) + "\n"
             "_ns = {\n"
-            "    'bpy': bpy, 'bmesh': bmesh, 'bt': bt, 'math': math, 'json': json,\n"
+            "    'bpy': bpy, 'bmesh': bmesh, 'bt': bt, 'bmo': bmo, 'math': math, 'json': json,\n"
             "    'Vector': Vector, 'Euler': Euler, 'Matrix': Matrix,\n"
-            "    'SCENE_NAME': SCENE_NAME, 'OUT_DIR': OUT_DIR,\n"
+            "    'SCENE_NAME': SCENE_NAME, 'OUT_DIR': OUT_DIR, 'BASE_MESH_MANIFEST': BASE_MESH_MANIFEST,\n"
             "    'scene': scene, 'col_export': col_export, 'col_rig': col_rig, 'col_studio': col_studio,\n"
             "}\n"
             "try:\n"
@@ -363,11 +394,12 @@ class AutonomousBlenderHarness:
         user_prompt: str,
     ) -> dict[str, Any]:
         full = (
-            "import json, sys\n"
+            "import importlib, json, sys\n"
             f"if {json.dumps(str(self.project_root))} not in sys.path:\n"
             f"    sys.path.insert(0, {json.dumps(str(self.project_root))})\n"
             "import bpy\n"
             "from blender_orchestration import blender_toolkit as bt\n"
+            "bt = importlib.reload(bt)\n"
             + code_body
         )
         return adapter.execute_blender_json(full, user_prompt=user_prompt, stage=stage_label)["parsed"]
@@ -449,6 +481,7 @@ class AutonomousBlenderHarness:
         producer_sessions: set[str],
         scripts_dir: Path,
         fallback_checkpoint: Path | None = None,
+        base_mesh_manifest: Path | None = None,
         max_code_retries: int = 3,
     ) -> dict[str, Any]:
         """Run a specialist agent in its own fresh context, extract bpy code, execute via MCP with traceback self-repair."""
@@ -509,6 +542,7 @@ class AutonomousBlenderHarness:
                 stage_label=f"{stage_label}_exec_{attempt}",
                 user_prompt=user_prompt,
                 fallback_checkpoint=fallback_checkpoint,
+                base_mesh_manifest=base_mesh_manifest,
             )
             if exec_res.get("ok"):
                 return {
@@ -543,6 +577,8 @@ class AutonomousBlenderHarness:
         reference_mode: str = "REFERENCE_GUIDED",
         approved_reference_path: Path | None = None,
         animation_mode: str = "animated",
+        geometry_strategy: str = "FROM_SCRATCH",
+        base_mesh_manifest: Path | None = None,
         reset_blender_before_run: bool = True,
         reset_blender_after_run: bool = True,
         extra_guidance: str = "",
@@ -551,6 +587,27 @@ class AutonomousBlenderHarness:
     ) -> dict[str, Any]:
         """Run one complete autonomous production cycle from a clean Blender session."""
         t0 = time.monotonic()
+        verify_model_id_lock(self.model_id, self.expected_model_id)
+        is_base_mesh_mode = str(geometry_strategy).upper() == "BASE_MESH"
+        base_mesh_prov: dict[str, Any] | None = None
+        available_base_mesh_names: list[str] = ["Stylized Female", "Stylized Male", "Realistic Female", "Realistic Male"]
+        if is_base_mesh_mode:
+            if not base_mesh_manifest:
+                raise ValueError("geometry_strategy='BASE_MESH' requires base_mesh_manifest provenance.json path.")
+            base_mesh_prov = verify_approved_base_mesh_manifest(base_mesh_manifest)
+            inspect_cache = self.project_root / "output/autonomous_harness/qwen_adaptive_base_mesh/preflight/base_mesh_inspection.json"
+            if inspect_cache.is_file():
+                try:
+                    idata = json.loads(inspect_cache.read_text(encoding="utf-8"))
+                    names = [str(o.get("name")) for o in ((idata.get("inspection") or {}).get("objects") or []) if o.get("type") == "MESH"]
+                    if names:
+                        available_base_mesh_names = names
+                except Exception:
+                    pass
+
+        resource_before = collect_resource_snapshot()
+        skill_char_budget = 1600 if is_base_mesh_mode else 3600
+        api_cheatsheet = BASE_MESH_API_CHEATSHEET if is_base_mesh_mode else TOOLKIT_API_CHEATSHEET
         run_dir = Path(run_dir)
         handoffs_dir = run_dir / "handoffs"
         scripts_dir = run_dir / "scripts"
@@ -600,40 +657,72 @@ class AutonomousBlenderHarness:
             "creature-artist" if director_plan["analysis"]["asset_type"] == "creature" else "prop-artist"
         )
         s1_skills = ["blender-director", primary_disc_skill, "stylized-style"]
-        s1_refs = {"blender-director": ["../references/reference-image-match.md"]} if ref_file else None
-        s1_skill_ctx = self._load_skills_context(s1_skills, contracts, include_refs=s1_refs)
+        s1_refs = None if is_base_mesh_mode else ({"blender-director": ["../references/reference-image-match.md"]} if ref_file else None)
+        s1_skill_ctx = self._load_skills_context(s1_skills, contracts, include_refs=s1_refs, max_chars_per_skill=skill_char_budget)
 
-        s1_prompt = "\n".join(
-            [
-                "You are the Art Director & Blender Technical Director Agent (Stage 1: Reference Analysis & Design Specification).",
-                "Do NOT call any tools, bash, or MCP servers. Output ONLY a single valid JSON object.",
-                f"User Request: {prompt}",
-                f"Asset Name: {asset_name} | Mode: {reference_mode} | Animation Mode: {animation_mode}",
-                f"Additional Optimization Guidance:\n{extra_guidance}" if extra_guidance else "",
-                "Loaded Blender Skills:",
-                s1_skill_ctx,
-                "",
-                "Analyze the attached reference image (or prompt if TEXT_ONLY) thoroughly and produce a concrete 3D CAD/art blueprint.",
-                "Coordinate convention: Blender metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground plane is `z = 0.0`.",
-                "Break modeling into 2 cohesive sequential `component_passes` (Pass 1: primary sculpted anatomy/head/face/body OR core structure; Pass 2: layered costume/armor/hair/accessories/hero prop) so scripts stay crisp, detailed, and quota-efficient.",
-                "Return ONLY JSON with this schema:",
-                "{",
-                '  "asset_type": "character|prop|creature",',
-                '  "style_direction": "...",',
-                '  "target_dimensions_m": {"height": 1.65, "width": 0.65, "depth": 0.45},',
-                '  "requires_rigging": true,',
-                '  "requires_animation": true,',
-                '  "silhouette_and_proportions": {"head_units": 6.5, "key_landmarks_z_m": {"ground": 0.0, "...": 1.65}, "notes": "..."},',
-                '  "color_palette": [{"material_name": "MAT_...", "hex": "#...", "rgb_linear": [0.1, 0.2, 0.3], "roughness": 0.5, "metallic": 0.0, "emission_rgb": null, "emission_strength": 0.0, "surface_type": "skin|cloth|leather|gold|hair|emissive|wood|stone|metal", "notes": "..."}],',
-                '  "painted_textures_needed": [{"texture_name": "TEX_...", "target_objects": ["SM_..."], "description": "exact visual features to paint procedurally"}],',
-                '  "component_passes": [',
-                '    {"pass_id": "pass_1_...", "title": "...", "skills": ["..."], "components": [{"name": "SM_...", "description": "...", "z_range_m": [0.0, 0.5], "key_features": ["..."]}]}',
-                "  ],",
-                '  "hero_features_checklist": ["specific unmistakable visual details that must appear in the final render"],',
-                '  "design_summary_markdown": "concise production specification"',
-                "}",
-            ]
-        )
+        if is_base_mesh_mode:
+            s1_prompt = "\n".join(
+                [
+                    "You are the Art Director Agent (Stage 1: Reference Analysis & Base Mesh Blueprint).",
+                    "Do NOT call any tools. Output ONLY one valid JSON object.",
+                    f"User Request: {prompt}",
+                    f"Asset Name: {asset_name} | Mode: {reference_mode} | Animation: {animation_mode}",
+                    f"Approved Bundle Meshes Available: {available_base_mesh_names}",
+                    f"Guidance: {extra_guidance}" if extra_guidance else "",
+                    "Relevant Skills:\n" + s1_skill_ctx,
+                    "",
+                    "Inspect the attached image carefully. Return ONLY JSON:",
+                    "{",
+                    '  "asset_type": "character",',
+                    '  "base_mesh_object": "GEO-body_female_stylized",',
+                    '  "style_direction": "...",',
+                    '  "target_dimensions_m": {"height": 1.65, "width": 0.65, "depth": 0.35},',
+                    '  "requires_rigging": true,',
+                    '  "requires_animation": true,',
+                    '  "semantic_stylization_controls": {"head_scale": 0.08, "eye_size": 0.18, "eye_separation": 0.05, "jaw_width": -0.15, "chin_length": -0.05, "ear_pointedness": 0.85, "waist_taper": -0.18, "shoulder_width": -0.08},',
+                    '  "color_palette": [{"material_name": "MAT_...", "hex": "#...", "roughness": 0.5, "metallic": 0.0, "emission_strength": 0.0, "surface_type": "skin|cloth|leather|gold|hair|emissive"}],',
+                    '  "painted_textures_needed": [{"texture_name": "TEX_...", "target_objects": ["SM_..."], "description": "..."}],',
+                    '  "component_passes": [',
+                    '    {"pass_id": "pass_1_garments_boots", "title": "Body-Conforming Tunic, Undershirt, Belt, Cuffs & Boots", "skills": ["character-artist", "cloth-sim"], "components": [{"name": "SM_...", "description": "..."}]},',
+                    '    {"pass_id": "pass_2_hair_prop_grip", "title": "Layered Bezier Hair, Crown Braid, Prop & Hand Grip", "skills": ["hair-groom", "sculpting"], "components": [{"name": "SM_...", "description": "..."}]}',
+                    "  ],",
+                    '  "hero_features_checklist": ["..."],',
+                    '  "design_summary_markdown": "concise production specification"',
+                    "}",
+                ]
+            )
+        else:
+            s1_prompt = "\n".join(
+                [
+                    "You are the Art Director & Blender Technical Director Agent (Stage 1: Reference Analysis & Design Specification).",
+                    "Do NOT call any tools, bash, or MCP servers. Output ONLY a single valid JSON object.",
+                    f"User Request: {prompt}",
+                    f"Asset Name: {asset_name} | Mode: {reference_mode} | Animation Mode: {animation_mode}",
+                    f"Additional Optimization Guidance:\n{extra_guidance}" if extra_guidance else "",
+                    "Loaded Blender Skills:",
+                    s1_skill_ctx,
+                    "",
+                    "Analyze the attached reference image (or prompt if TEXT_ONLY) thoroughly and produce a concrete 3D CAD/art blueprint.",
+                    "Coordinate convention: Blender metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground plane is `z = 0.0`.",
+                    "Break modeling into 2 cohesive sequential `component_passes` (Pass 1: primary sculpted anatomy/head/face/body OR core structure; Pass 2: layered costume/armor/hair/accessories/hero prop) so scripts stay crisp, detailed, and quota-efficient.",
+                    "Return ONLY JSON with this schema:",
+                    "{",
+                    '  "asset_type": "character|prop|creature",',
+                    '  "style_direction": "...",',
+                    '  "target_dimensions_m": {"height": 1.65, "width": 0.65, "depth": 0.45},',
+                    '  "requires_rigging": true,',
+                    '  "requires_animation": true,',
+                    '  "silhouette_and_proportions": {"head_units": 6.5, "key_landmarks_z_m": {"ground": 0.0, "...": 1.65}, "notes": "..."},',
+                    '  "color_palette": [{"material_name": "MAT_...", "hex": "#...", "rgb_linear": [0.1, 0.2, 0.3], "roughness": 0.5, "metallic": 0.0, "emission_rgb": null, "emission_strength": 0.0, "surface_type": "skin|cloth|leather|gold|hair|emissive|wood|stone|metal", "notes": "..."}],',
+                    '  "painted_textures_needed": [{"texture_name": "TEX_...", "target_objects": ["SM_..."], "description": "exact visual features to paint procedurally"}],',
+                    '  "component_passes": [',
+                    '    {"pass_id": "pass_1_...", "title": "...", "skills": ["..."], "components": [{"name": "SM_...", "description": "...", "z_range_m": [0.0, 0.5], "key_features": ["..."]}]}',
+                    "  ],",
+                    '  "hero_features_checklist": ["specific unmistakable visual details that must appear in the final render"],',
+                    '  "design_summary_markdown": "concise production specification"',
+                    "}",
+                ]
+            )
 
         quota_blocker: dict[str, Any] | None = None
         spec_file = handoffs_dir / "01_design_spec.json"
@@ -682,7 +771,7 @@ class AutonomousBlenderHarness:
         spec_file.write_text(json.dumps(design_spec, indent=2) + "\n", encoding="utf-8")
         design_spec_md = str(design_spec.get("design_summary_markdown") or json.dumps(design_spec, indent=2)[:2000])
         (handoffs_dir / "01_design_spec.md").write_text(design_spec_md + "\n", encoding="utf-8")
-        spec_compact = json.dumps(design_spec, indent=2)[:5500]
+        spec_compact = json.dumps(design_spec, indent=2)[: (2800 if is_base_mesh_mode else 5500)]
 
         # Open isolated Blender MCP adapter
         adapter = MCPAdapter(
@@ -758,31 +847,50 @@ class AutonomousBlenderHarness:
                 evaluate_skill_contract(c)
 
             # -------------------------------------------------------------------
-            # STAGE 2: Proportion & Silhouette Blockout Agent + Clay Preview
+            # STAGE 2: Proportion & Silhouette Blockout (or Base Mesh Stylization) + Clay QA
             # -------------------------------------------------------------------
             stage_reviews["blockout"] = []
             prior_blk_renders: list[dict[str, Any]] = []
+            landmarks_summary = ""
             if start_stage <= 2:
-                s2_skill_ctx = self._load_skills_context([primary_disc_skill, "blender-modeler"], contracts)
-                s2_prompt = "\n".join(
-                    [
-                        "You are the Blender Blockout & Proportions Specialist Agent (Stage 2).",
-                        "Do NOT call any tools. Return ONLY a single ```python ... ``` script that builds a clean, proportional 3D silhouette blockout in Blender.",
-                        "RULES:",
-                        "- Ground BOTH feet (or asset base) cleanly and solidly at `z = 0.0` (`min_z ≈ 0.0`), facing `-Y` (front).",
-                        "- Match exact proportions, graceful contrapposto / heroic stance, and major silhouette masses from the Design Specification and attached reference.",
-                        "- FOR HUMANOID / CHARACTERS:",
-                        "  1. Define ONE explicit shared joint table (`SHOULDER_L/R, ELBOW_L/R, WRIST_L/R, HIP_L/R, KNEE_L/R, ANKLE_L/R, NECK, HEAD_CENTER`) so every body part, sleeve, cuff, hand, and prop aligns with ZERO gaps or double limbs!",
-                        "  2. ALWAYS build arms using `bt.build_articulated_arm_chain(...)` (NEVER build separate tunic sleeves that hang past the elbow!).",
-                        "  3. ALWAYS build the head/face using `bt.build_stylized_head_base(...)` with SUBTLE natural head pitch (`head_tilt_deg` X within `-6..+12 deg` max — NEVER pitch head 25-35 deg down so the forehead dominates the face!).",
-                        "  4. Use a graceful, natural, balanced grounded stance (BOTH feet firmly on `z = 0.0` in a subtle contrapposto/step — NEVER an awkward high sideways flamingo leg lift!).",
-                        "  5. Shape torso/bodice/waist panels smoothly conforming to the ribcage silhouette (NEVER oversized flat oval surfboards!), and anchor any held prop directly to `arm_res['joints']['palm_center']` so opposing thumb+fingers wrap its edge.",
-                        "- Keep object count clean (~15-35 cohesive `SM_*` meshes in `col_export`, joining repeated sub-parts via `bt.join_objects`).",
-                        TOOLKIT_API_CHEATSHEET,
-                        "Loaded Skills:\n" + s2_skill_ctx,
-                        "Design Specification:\n" + spec_compact,
-                    ]
-                )
+                s2_skills = [primary_disc_skill, "sculpting"] if is_base_mesh_mode else [primary_disc_skill, "blender-modeler"]
+                s2_skill_ctx = self._load_skills_context(s2_skills, contracts, max_chars_per_skill=skill_char_budget)
+                if is_base_mesh_mode:
+                    base_obj_choice = str(design_spec.get("base_mesh_object") or "GEO-body_female_stylized")
+                    sem_ctrls = json.dumps(design_spec.get("semantic_stylization_controls") or {})
+                    s2_prompt = "\n".join(
+                        [
+                            "You are the Base Mesh & Anatomical Stylization Specialist (Stage 2).",
+                            "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
+                            "GOALS:",
+                            f"1) Load approved base mesh {base_obj_choice!r} via `bmo.verify_and_load_base_mesh(scene, BASE_MESH_MANIFEST, {base_obj_choice!r}, target_height_m=1.65, collection=col_export, new_name='SM_BaseBody')`.",
+                            f"2) Inspect regions and apply semantic stylization `bmo.apply_semantic_stylization(body_obj, {sem_ctrls})` matching the reference silhouette, face proportions, jaw/chin taper, larger stylized eyes, and pointed elven ears.",
+                            "3) Add subtle sculpted 3D upper/lower eyelid rims and arched brows hugging `eye_L`/`eye_R` landmarks if needed for expressive readable eyes in clay renders, and verify `min_z ≈ 0.0`.",
+                            api_cheatsheet,
+                            "Loaded Skills:\n" + s2_skill_ctx,
+                            "Design Spec:\n" + spec_compact,
+                        ]
+                    )
+                else:
+                    s2_prompt = "\n".join(
+                        [
+                            "You are the Blender Blockout & Proportions Specialist Agent (Stage 2).",
+                            "Do NOT call any tools. Return ONLY a single ```python ... ``` script that builds a clean, proportional 3D silhouette blockout in Blender.",
+                            "RULES:",
+                            "- Ground BOTH feet (or asset base) cleanly and solidly at `z = 0.0` (`min_z ≈ 0.0`), facing `-Y` (front).",
+                            "- Match exact proportions, graceful contrapposto / heroic stance, and major silhouette masses from the Design Specification and attached reference.",
+                            "- FOR HUMANOID / CHARACTERS:",
+                            "  1. Define ONE explicit shared joint table (`SHOULDER_L/R, ELBOW_L/R, WRIST_L/R, HIP_L/R, KNEE_L/R, ANKLE_L/R, NECK, HEAD_CENTER`) so every body part, sleeve, cuff, hand, and prop aligns with ZERO gaps or double limbs!",
+                            "  2. ALWAYS build arms using `bt.build_articulated_arm_chain(...)` (NEVER build separate tunic sleeves that hang past the elbow!).",
+                            "  3. ALWAYS build the head/face using `bt.build_stylized_head_base(...)` with SUBTLE natural head pitch (`head_tilt_deg` X within `-6..+12 deg` max — NEVER pitch head 25-35 deg down so the forehead dominates the face!).",
+                            "  4. Use a graceful, natural, balanced grounded stance (BOTH feet firmly on `z = 0.0` in a subtle contrapposto/step — NEVER an awkward high sideways flamingo leg lift!).",
+                            "  5. Shape torso/bodice/waist panels smoothly conforming to the ribcage silhouette (NEVER oversized flat oval surfboards!), and anchor any held prop directly to `arm_res['joints']['palm_center']` so opposing thumb+fingers wrap its edge.",
+                            "- Keep object count clean (~15-35 cohesive `SM_*` meshes in `col_export`, joining repeated sub-parts via `bt.join_objects`).",
+                            api_cheatsheet,
+                            "Loaded Skills:\n" + s2_skill_ctx,
+                            "Design Specification:\n" + spec_compact,
+                        ]
+                    )
                 s2_exec = self._run_code_agent_with_retry(
                     adapter=adapter,
                     scene_name=scene_name,
@@ -795,20 +903,22 @@ class AutonomousBlenderHarness:
                     producer_sessions=producer_sessions,
                     scripts_dir=scripts_dir,
                     fallback_checkpoint=last_good_checkpoint,
+                    base_mesh_manifest=base_mesh_manifest,
                 )
                 technical_gates["blockout_created"] = bool(s2_exec.get("ok") and (s2_exec.get("audit") or {}).get("mesh_count", 0) > 0)
                 audit_latest = s2_exec.get("audit") or {}
                 _save_good_ckpt(checkpoints_dir / "02_blockout_p0.blend", "stage_02_save")
 
+                blk_views = ["front", "three_quarter", "side", "rear", "closeup_top"] if is_base_mesh_mode else ["front", "three_quarter", "side", "rear"]
                 blk_r = self._render_views(
                     adapter,
                     scene_name,
                     renders_dir / "stage_02_blockout_p0",
                     "blk_p0",
-                    views=["front", "three_quarter", "side", "rear"],
+                    views=blk_views,
                     mode="clay",
-                    res=(640, 800),
-                    samples=20,
+                    res=self.render_res_stage if is_base_mesh_mode else (640, 800),
+                    samples=self.render_samples_stage if is_base_mesh_mode else 20,
                     stage_label="stage_02_render_p0",
                     user_prompt=prompt,
                     fallback_checkpoint=last_good_checkpoint,
@@ -816,6 +926,32 @@ class AutonomousBlenderHarness:
                 audit_latest = blk_r["audit"]
                 anomalies_latest = blk_r.get("anomalies") or {}
                 prior_blk_renders = blk_r["render"]["renders"]
+                if is_base_mesh_mode:
+                    # Inspect verified anatomical landmarks & run independent visual feedback on Base Mesh stylization
+                    lm_res = self._run_blender_util(
+                        adapter,
+                        f"s = bpy.data.scenes[{json.dumps(scene_name)}]\n"
+                        "body = bpy.data.objects.get('SM_BaseBody') or next((o for o in s.objects if o.type=='MESH' and not o.name.startswith('SM_Studio_')), None)\n"
+                        "lm = bmo.inspect_anatomical_regions(body, assign_vertex_groups=False) if body else {}\n"
+                        "print('__ORCH_JSON__:' + json.dumps({'ok': bool(body), 'landmarks': lm.get('landmarks', {})}))\n",
+                        stage_label="stage_02_inspect_landmarks",
+                        user_prompt=prompt,
+                    )
+                    if lm_res.get("landmarks"):
+                        landmarks_summary = json.dumps(lm_res["landmarks"], indent=2)[:1600]
+                        (handoffs_dir / "02_anatomical_landmarks.json").write_text(json.dumps(lm_res["landmarks"], indent=2) + "\n", encoding="utf-8")
+                    blk_rev = self.stage_reviewer.review_stage(
+                        stage_name="blockout",
+                        renders=prior_blk_renders,
+                        design_spec_summary=design_spec_md,
+                        producer_session_ids=producer_sessions,
+                        approved_reference_path=ref_file,
+                        pass_threshold_score=75.0,
+                    )
+                    if blk_rev.get("quota_blocked"):
+                        raise QuotaBlockedError(blk_rev["quota_blocked"])
+                    stage_reviews["blockout"].append(blk_rev)
+                    (reviews_dir / "stage_02_blockout_p0.json").write_text(json.dumps(blk_rev, indent=2) + "\n", encoding="utf-8")
             else:
                 blk_dir = renders_dir / "stage_02_blockout_p0"
                 if blk_dir.is_dir():
@@ -830,6 +966,8 @@ class AutonomousBlenderHarness:
             stage_reviews["detailed_modeling"] = []
             prior_geo_renders: list[dict[str, Any]] = []
             if start_stage <= 3:
+                if not landmarks_summary and (handoffs_dir / "02_anatomical_landmarks.json").is_file():
+                    landmarks_summary = (handoffs_dir / "02_anatomical_landmarks.json").read_text(encoding="utf-8")[:1600]
                 passes = list(design_spec.get("component_passes") or [])[:2]
                 for p_idx, pspec in enumerate(passes, start=1):
                     pid = str(pspec.get("pass_id") or f"pass_{p_idx}")
@@ -839,32 +977,51 @@ class AutonomousBlenderHarness:
                     pskills = list(pspec.get("skills") or [primary_disc_skill, "sculpting"])
                     if "sculpting" not in pskills:
                         pskills.append("sculpting")
-                    p_skill_ctx = self._load_skills_context(pskills, contracts)
+                    p_skill_ctx = self._load_skills_context(pskills[:2], contracts, max_chars_per_skill=skill_char_budget)
 
                     # Attach compact blockout sheet plus reference for visual spatial grounding
                     attach_p = [ref_file] if ref_file else []
                     attach_p.extend(compose_review_sheets(prior_blk_renders)[:1])
 
-                    p_prompt = "\n".join(
-                        [
-                            f"You are the Detailed 3D Modeling & Sculpting Specialist Agent (Stage 3 — {pid}: {pspec.get('title', '')}).",
-                            "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
-                            "CRITICAL QUALITY STANDARDS:",
-                            "- Upgrade/replace ONLY the components belonging to this pass; ALWAYS delete any replaced blockout/old mesh via `bt.remove_object_if_exists(old_name)` so ZERO overlapping duplicate meshes remain!",
-                            "- Use exact coordinates from the Complete Scene Inventory below so adjacent parts connect seamlessly with ZERO gaps, ZERO floating seams, and ZERO coplanar Z-fighting overlays (any overlay panel MUST sit cleanly +0.004m outside the base with `Solidify`, OR be painted via UV texture!).",
-                            "- Keep object count clean (~18-45 cohesive `SM_*` meshes total): join repeated details (collar ribs, stitches, trim studs, braid strands) into ONE mesh per component using `bt.join_objects(...)`!",
-                            "- If modeling a character head/face: ALWAYS use `bt.build_stylized_head_base(...)` with subtle head pitch (`-6..+12 deg` max — NEVER tilt 30 deg down!) so big expressive eyes, crisp arched lids/brows, nose, and lips are balanced — and ALWAYS add soft layered forehead/temple framing hair locks so the forehead is framed naturally!",
-                            "- If modeling humanoid/character arms & hands: ALWAYS use `bt.build_articulated_arm_chain(...)` so upper sleeve overlaps the elbow smoothly (ZERO extra dangling sleeves and ZERO open socket rings!), cuff aligns to the forearm, and 5-finger hand + glove are guaranteed connected!",
-                            "- If modeling flowing hair: build a fitted scalp cap covering down to the nape + `bt.build_interwoven_braid(...)` for braids + `bt.build_sculpted_hair_sheet(...)` for a BROAD, THICK, CONNECTED flowing hair curtain/wave mass PLUS 6-10 overlapping tapered sculpted ribbon locks (`bt.sculpt_tapered_ribbon`) framing the forehead, cheeks, and outer edge!",
-                            "- If modeling footwear/boots/armor: ensure BOTH soles touch `z = 0.0` cleanly with distinct heel, sloping instep, and sculpted toe box, and NEVER place coplanar patch meshes at the same radius as the boot upper!",
-                            "- Apply real Gaussian RBF sculpting (`bt.deform_mesh_sculpt`) to organic surfaces for authentic 3D form relief.",
-                            f"Pass Specification:\n{json.dumps(pspec, indent=2)}",
-                            f"Full Design Spec Context:\n{spec_compact[:3200]}",
-                            f"Complete Live Blender Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)}",
-                            "Loaded Skills:\n" + p_skill_ctx,
-                            TOOLKIT_API_CHEATSHEET,
-                        ]
-                    )
+                    if is_base_mesh_mode:
+                        p_prompt = "\n".join(
+                            [
+                                f"You are the Body-Aware Garment, Curve-Hair & Prop Specialist (Stage 3 — {pid}: {pspec.get('title', '')}).",
+                                "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
+                                "RULES FOR BASE MESH MODE:",
+                                "- Preserve `SM_BaseBody` and `SM_BaseBody_Eye_L`/`R` cleanly (do NOT delete them!). Remove/replace only any older garment/hair/prop object you recreate (`bt.remove_object_if_exists`).",
+                                "- GARMENTS: ALWAYS derive body-conforming clothing directly from `body_obj = bpy.data.objects['SM_BaseBody']` via `bmo.extract_garment_from_body(...)` (tunic bodice + flared skirt, inner cream undershirt collar/hem, belts/straps, trousers/tights, fitted knee cuffs, boot shafts/spats) so ZERO floating oval plates or double sleeves exist!",
+                                "- HAIR: Build scalp-conforming hair + layered Bezier curve locks + interwoven braids via `bmo.build_layered_curve_hair(...)` using exact `head_center`/`neck`/`shoulder` coordinates from Landmarks below (NEVER cone spikes or round tubes!).",
+                                "- HANDS & HELD PROP: Build hero prop (`SM_HeroProp` etc.) and call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)` so thumb + fingers physically wrap its edge!",
+                                f"Verified Landmarks:\n{landmarks_summary}",
+                                f"Pass Spec:\n{json.dumps(pspec, indent=2)[:1500]}",
+                                f"Design Spec:\n{spec_compact[:2200]}",
+                                f"Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800]}",
+                                "Loaded Skills:\n" + p_skill_ctx,
+                                api_cheatsheet,
+                            ]
+                        )
+                    else:
+                        p_prompt = "\n".join(
+                            [
+                                f"You are the Detailed 3D Modeling & Sculpting Specialist Agent (Stage 3 — {pid}: {pspec.get('title', '')}).",
+                                "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
+                                "CRITICAL QUALITY STANDARDS:",
+                                "- Upgrade/replace ONLY the components belonging to this pass; ALWAYS delete any replaced blockout/old mesh via `bt.remove_object_if_exists(old_name)` so ZERO overlapping duplicate meshes remain!",
+                                "- Use exact coordinates from the Complete Scene Inventory below so adjacent parts connect seamlessly with ZERO gaps, ZERO floating seams, and ZERO coplanar Z-fighting overlays (any overlay panel MUST sit cleanly +0.004m outside the base with `Solidify`, OR be painted via UV texture!).",
+                                "- Keep object count clean (~18-45 cohesive `SM_*` meshes total): join repeated details (collar ribs, stitches, trim studs, braid strands) into ONE mesh per component using `bt.join_objects(...)`!",
+                                "- If modeling a character head/face: ALWAYS use `bt.build_stylized_head_base(...)` with subtle head pitch (`-6..+12 deg` max — NEVER tilt 30 deg down!) so big expressive eyes, crisp arched lids/brows, nose, and lips are balanced — and ALWAYS add soft layered forehead/temple framing hair locks so the forehead is framed naturally!",
+                                "- If modeling humanoid/character arms & hands: ALWAYS use `bt.build_articulated_arm_chain(...)` so upper sleeve overlaps the elbow smoothly (ZERO extra dangling sleeves and ZERO open socket rings!), cuff aligns to the forearm, and 5-finger hand + glove are guaranteed connected!",
+                                "- If modeling flowing hair: build a fitted scalp cap covering down to the nape + `bt.build_interwoven_braid(...)` for braids + `bt.build_sculpted_hair_sheet(...)` for a BROAD, THICK, CONNECTED flowing hair curtain/wave mass PLUS 6-10 overlapping tapered sculpted ribbon locks (`bt.sculpt_tapered_ribbon`) framing the forehead, cheeks, and outer edge!",
+                                "- If modeling footwear/boots/armor: ensure BOTH soles touch `z = 0.0` cleanly with distinct heel, sloping instep, and sculpted toe box, and NEVER place coplanar patch meshes at the same radius as the boot upper!",
+                                "- Apply real Gaussian RBF sculpting (`bt.deform_mesh_sculpt`) to organic surfaces for authentic 3D form relief.",
+                                f"Pass Specification:\n{json.dumps(pspec, indent=2)}",
+                                f"Full Design Spec Context:\n{spec_compact[:3200]}",
+                                f"Complete Live Blender Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)}",
+                                "Loaded Skills:\n" + p_skill_ctx,
+                                api_cheatsheet,
+                            ]
+                        )
                     p_exec = self._run_code_agent_with_retry(
                         adapter=adapter,
                         scene_name=scene_name,
@@ -877,6 +1034,7 @@ class AutonomousBlenderHarness:
                         producer_sessions=producer_sessions,
                         scripts_dir=scripts_dir,
                         fallback_checkpoint=last_good_checkpoint,
+                        base_mesh_manifest=base_mesh_manifest,
                     )
                     if p_exec.get("ok") and p_exec.get("audit"):
                         audit_latest = p_exec["audit"]
@@ -895,8 +1053,8 @@ class AutonomousBlenderHarness:
                         f"geo_p{fix_idx}",
                         views=["front", "three_quarter", "side", "rear", "closeup_top", "closeup_mid", "closeup_bottom"],
                         mode="clay",
-                        res=(640, 800),
-                        samples=20,
+                        res=self.render_res_stage if is_base_mesh_mode else (640, 800),
+                        samples=self.render_samples_stage if is_base_mesh_mode else 20,
                         stage_label=f"stage_03_render_p{fix_idx}",
                         user_prompt=prompt,
                         fallback_checkpoint=last_good_checkpoint,
@@ -933,10 +1091,11 @@ class AutonomousBlenderHarness:
                             "- Execute REAL 3D mesh/sculpt/topology fixes ONLY on the defective components listed below AND any GEOMETRY_ANOMALIES_TO_FIX.",
                             "- ALWAYS delete old defective meshes (`bt.remove_object_if_exists(...)`) BEFORE building replacements — NEVER stack duplicate eyelids, duplicate sleeves, or overlapping patches!",
                             "- Eliminate ANY double sleeves, elbow socket seams, oversized forehead/excessive downward head pitch, floating fragments, needle spikes, coplanar Z-fighting overlays, or floating feet (ensure `min_z ≈ 0.0`).",
-                            "Independent Reviewer Defects:\n" + json.dumps(rev.get("defects", []), indent=2)[:3500],
-                            "Reviewer Observations:\n" + json.dumps(rev.get("observations_by_view", {}), indent=2)[:1500],
-                            "Complete Live Scene Inventory (ALL object names and anomalies):\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest),
-                            TOOLKIT_API_CHEATSHEET,
+                            f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
+                            "Independent Reviewer Defects:\n" + json.dumps(rev.get("defects", []), indent=2)[:2800],
+                            "Reviewer Observations:\n" + json.dumps(rev.get("observations_by_view", {}), indent=2)[:1200],
+                            "Complete Live Scene Inventory:\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800],
+                            api_cheatsheet,
                             "Return ONLY a single ```python ... ``` script.",
                         ]
                     )
@@ -952,6 +1111,7 @@ class AutonomousBlenderHarness:
                         producer_sessions=producer_sessions,
                         scripts_dir=scripts_dir,
                         fallback_checkpoint=last_good_checkpoint,
+                        base_mesh_manifest=base_mesh_manifest,
                     )
                     _save_good_ckpt(checkpoints_dir / f"03_detailed_modeling_fix{fix_idx + 1}.blend", f"stage_03_save_fix_{fix_idx + 1}")
 
@@ -978,7 +1138,11 @@ class AutonomousBlenderHarness:
             stage_reviews["materials_and_textures"] = []
             prior_look_renders: list[dict[str, Any]] = []
             if start_stage <= 4:
-                s4_skill_ctx = self._load_skills_context(["uv-workflow", "materials", "texture-workflow", "stylized-style", "lighting"], contracts)
+                s4_skill_ctx = self._load_skills_context(
+                    ["uv-workflow", "materials", "texture-workflow", "lighting"] if is_base_mesh_mode else ["uv-workflow", "materials", "texture-workflow", "stylized-style", "lighting"],
+                    contracts,
+                    max_chars_per_skill=skill_char_budget,
+                )
                 s4_files = compose_review_sheets(prior_geo_renders)
                 if ref_file:
                     s4_files.append(ref_file)
@@ -988,15 +1152,14 @@ class AutonomousBlenderHarness:
                         "You are the UV, Texture, Stylized PBR Material & Lookdev Specialist Agent (Stage 4).",
                         "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
                         "CRITICAL LOOKDEV STANDARDS:",
-                        "- Unwrap UVs on EVERY mesh in `col_export` (`bt.project_planar_uv` on front-facing eyes/emblems; preserve existing head UV from `build_stylized_head_base` OR compute exact actual mesh vertex X/Z min-max BEFORE projecting planar UV so painted features NEVER misalign!).",
-                        "- Paint crisp, high-resolution (`1024x1024`) procedural sRGB textures via `bt.create_painted_image_texture(...)` using `bt.hex_to_srgb('#RRGGBB')` — especially expressive stylized eyes (crisp sclera, rich emerald/colored iris gradient, dark pupil, upper lid shadow, bright white catchlights), soft feathered cheek blush & defined warm lip contour aligned to actual head UV, ornate garment embroidery/quilting/boot wrap panels, and glowing runic emblems with a dedicated `emission_texture` (`emission_strength=6.0..10.0`) — and pack them (`pack=True`)!",
-                        "- Create distinct, rich, saturated `MAT_*` stylized PBR materials via `bt.make_pbr_material(name, '#RRGGBB', ...)` passing exact rich `#RRGGBB` hex codes matching the approved reference (deep royal/saturated cloth `roughness=0.74-0.86, metallic=0.0` vs warm satin dark leather `roughness=0.38-0.48, coat=0.08` vs polished metallic gold/brass `metallic=0.92, roughness=0.26-0.34` vs warm subsurface skin `subsurface=0.06, roughness=0.52` vs rich sunlit golden/toned hair `roughness=0.38, coat=0.14` vs luminous emissive core!).",
-                        "- CRITICAL ANTI-MOTTLING RULE: NEVER put broad cloudy/blotchy procedural noise across cloth, trousers, or leather (`noise_bump <= 0.03`, `noise_scale >= 160` if used at all). Keep fabric and leather surfaces crisp, clean, and differentiated by saturation/value/roughness/AO contrast!",
-                        "- Assign a proper material to EVERY single mesh in `col_export` (ZERO untextured grey meshes left behind!).",
-                        f"Design Spec Palette & Texture Plan:\n{spec_compact}",
-                        f"Complete Live Blender Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)}",
+                        "- Preserve existing `UVMap` on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (or unwrap any new `SM_*` meshes lacking UVs; use `bt.project_planar_uv` cleanly on planar front emblems/eyeballs computed from their exact vertex bounds!).",
+                        "- Paint crisp `1024x1024` sRGB procedural textures via `bt.create_painted_image_texture(...)` using `bt.hex_to_srgb('#RRGGBB')` — expressive irises & catchlights on eyeballs, garment trim/embroidery, and glowing runic emblems (`emission_texture` + `emission_strength=6.0..10.0`), packed (`pack=True`).",
+                        "- Create distinct, saturated `MAT_*` stylized PBR materials via `bt.make_pbr_material(name, '#RRGGBB', ...)` (matte cloth `roughness=0.75-0.85`, satin dark leather `roughness=0.38-0.48, coat=0.08`, metallic gold `metallic=0.92, roughness=0.28`, warm subsurface skin `subsurface=0.06, roughness=0.52`, glossy golden hair `roughness=0.36, coat=0.14`, glowing emissive core).",
+                        "- ZERO blotchy cloudy noise on skin/cloth/leather (`noise_bump <= 0.03`). Assign a material to EVERY mesh in `col_export`!",
+                        f"Design Spec Palette & Texture Plan:\n{spec_compact[:2400]}",
+                        "Live Scene Inventory:\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800],
                         "Loaded Skills:\n" + s4_skill_ctx,
-                        TOOLKIT_API_CHEATSHEET,
+                        api_cheatsheet,
                     ]
                 )
                 s4_exec = self._run_code_agent_with_retry(
@@ -1011,6 +1174,7 @@ class AutonomousBlenderHarness:
                     producer_sessions=producer_sessions,
                     scripts_dir=scripts_dir,
                     fallback_checkpoint=last_good_checkpoint,
+                    base_mesh_manifest=base_mesh_manifest,
                 )
                 if s4_exec.get("ok") and s4_exec.get("audit"):
                     audit_latest = s4_exec["audit"]
@@ -1068,13 +1232,13 @@ class AutonomousBlenderHarness:
                         [
                             f"You are the Senior Lookdev, Texture & Form Polish Agent (Stage 4 Fix Pass {fix_idx + 1}/{self.max_stage_corrections}).",
                             "Do NOT call any tools. Compare the attached full-color contact sheets directly against the reference image / design specification.",
-                            "Fix ALL CRITICAL and MAJOR defects reported below — you MAY refine BOTH 3D geometry/proportions/hair/eyes/accessories AND painted textures/UVs/PBR materials so the asset genuinely matches the reference with portfolio-grade visual appeal!",
-                            "Pay special attention to crisp painted eyes/brows/lips, hair volume covering the entire scalp with zero bare skull gaps, rich vibrant colors & metallic trims, clean silhouette joins, and zero clipping.",
+                            "Fix ALL CRITICAL and MAJOR defects reported below — refine 3D geometry/hair/eyes/garments/accessories AND painted textures/UVs/PBR materials!",
                             "Preserve all good unaffected objects in `col_export`.",
-                            "Independent Reviewer Defects:\n" + json.dumps(rev.get("defects", []), indent=2)[:3500],
-                            "Reviewer Observations:\n" + json.dumps(rev.get("observations_by_view", {}), indent=2)[:1500],
-                            "Complete Live Scene Inventory (ALL object names and anomalies):\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest),
-                            TOOLKIT_API_CHEATSHEET,
+                            f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
+                            "Independent Reviewer Defects:\n" + json.dumps(rev.get("defects", []), indent=2)[:2800],
+                            "Reviewer Observations:\n" + json.dumps(rev.get("observations_by_view", {}), indent=2)[:1200],
+                            "Complete Live Scene Inventory:\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800],
+                            api_cheatsheet,
                             "Return ONLY a single ```python ... ``` script.",
                         ]
                     )
@@ -1090,6 +1254,7 @@ class AutonomousBlenderHarness:
                         producer_sessions=producer_sessions,
                         scripts_dir=scripts_dir,
                         fallback_checkpoint=last_good_checkpoint,
+                        base_mesh_manifest=base_mesh_manifest,
                     )
                     _save_good_ckpt(checkpoints_dir / f"04_lookdev_fix{fix_idx + 1}.blend", f"stage_04_save_fix_{fix_idx + 1}")
 
@@ -1156,17 +1321,18 @@ class AutonomousBlenderHarness:
             need_anim = bool(design_spec.get("requires_animation")) or animation_mode == "animated"
             if need_rig:
                 s5_skills = ["rigging"] + (["animation"] if need_anim else [])
-                s5_skill_ctx = self._load_skills_context(s5_skills, contracts)
+                s5_skill_ctx = self._load_skills_context(s5_skills, contracts, max_chars_per_skill=skill_char_budget)
                 s5_prompt = "\n".join(
                     [
                         "You are the Rigging & Animation Specialist Agent (Stage 5).",
                         "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
-                        "Build ONE clean hierarchical armature (`ARM_Asset`) matched to the EXACT bounding coordinates of the current meshes in `col_export` using `bt.create_rig_and_bind(scene, bone_specs, armature_name='ARM_Asset')` (remove any older duplicate armatures first!).",
+                        "Build ONE clean hierarchical armature (`ARM_Asset`) matched to the EXACT bounding/landmark coordinates of the current meshes in `col_export` using `bt.create_rig_and_bind(scene, bone_specs, armature_name='ARM_Asset')` (remove any older duplicate armatures first!).",
                         "If animation is required, create a clean looped animation cycle (`frame_start=1, frame_end=24`, start == end) via `bt.create_cycle_animation(arm_obj, keyframe_specs, action_name='ACT_RunCycle')`.",
                         f"Requires Animation: {need_anim} | Animation Mode: {animation_mode}",
-                        f"Complete Live Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)}",
+                        f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
+                        f"Complete Live Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800]}",
                         "Loaded Skills:\n" + s5_skill_ctx,
-                        TOOLKIT_API_CHEATSHEET,
+                        api_cheatsheet,
                     ]
                 )
                 s5_exec = self._run_code_agent_with_retry(
@@ -1181,6 +1347,7 @@ class AutonomousBlenderHarness:
                     producer_sessions=producer_sessions,
                     scripts_dir=scripts_dir,
                     fallback_checkpoint=last_good_checkpoint,
+                    base_mesh_manifest=base_mesh_manifest,
                 )
                 if s5_exec.get("ok") and s5_exec.get("audit"):
                     audit_latest = s5_exec["audit"]
@@ -1361,7 +1528,17 @@ class AutonomousBlenderHarness:
             )
 
         total_runtime = round(time.monotonic() - t0, 2)
+        resource_after = collect_resource_snapshot()
         total_tokens_in = sum(int((t.get("tokens") or {}).get("input", 0)) for t in agent_telemetry)
+        total_cache_read = sum(int(((t.get("tokens") or {}).get("cache") or {}).get("read", 0)) for t in agent_telemetry)
+        max_single_prompt = max(
+            (
+                int((t.get("tokens") or {}).get("input", 0))
+                + int(((t.get("tokens") or {}).get("cache") or {}).get("read", 0))
+                for t in agent_telemetry
+            ),
+            default=0,
+        )
         total_tokens_out = sum(int((t.get("tokens") or {}).get("output", 0)) for t in agent_telemetry)
         total_compactions = sum(int(t.get("compactions", 0)) for t in agent_telemetry)
 
@@ -1369,6 +1546,8 @@ class AutonomousBlenderHarness:
             "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "git_revision": _git_head_sha(),
             "model_id": self.model_id,
+            "geometry_strategy": str(geometry_strategy).upper(),
+            "base_mesh_provenance": base_mesh_prov,
             "status": "BLOCKED" if quota_blocker else ("PASS" if final_eval.get("passed") else "FAIL"),
             "quota_blocker": quota_blocker,
             "last_good_checkpoint": str(last_good_checkpoint) if last_good_checkpoint else None,
@@ -1378,8 +1557,14 @@ class AutonomousBlenderHarness:
             "animation_mode": animation_mode,
             "run_dir": str(run_dir),
             "total_runtime_sec": total_runtime,
-            "token_usage": {"input": total_tokens_in, "output": total_tokens_out},
+            "token_usage": {
+                "input": total_tokens_in,
+                "cache_read": total_cache_read,
+                "output": total_tokens_out,
+                "max_single_call_prompt_tokens": max_single_prompt,
+            },
             "compaction_events": total_compactions,
+            "resource_profile": {"before": resource_before, "after": resource_after},
             "mcp_tool_calls": dict(adapter.mcp_calls_by_operation),
             "mcp_total_calls": sum(adapter.mcp_calls_by_operation.values()),
             "blender_errors": list(adapter.blender_errors),

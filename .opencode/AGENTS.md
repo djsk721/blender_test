@@ -9,8 +9,9 @@ All 3D asset creation MUST be performed through Blender controlled by OpenCode a
 - Supported production modes ONLY: `TEXT_ONLY` and `REFERENCE_GUIDED`.
 - **Never introduce an `IMAGE_TO_3D` production mode.**
 - **Strictly forbid** external AI 3D generation services or tools (`generate_3d`, `generate_gaussian_world`, Tripo, Hunyuan3D, Hyper3D, Meshy, or equivalent).
-- **Prohibit premade meshes or downloaded 3D assets** (`search_assets`, `import_asset`) unless explicitly authorized by the user.
-- Blender must own modeling, sculpting/form refinement, retopology, UVs, materials/textures, hair/clothing, rigging, animation, rendering/visual QA, and export/validation. Reference images are visual specifications only, never externally generated geometry.
+- **Prohibit premade meshes or downloaded 3D assets** (`search_assets`, `import_asset`, downloaded finished characters, unauthorized costumes/hair/props) unless covered by the narrowly scoped approved Base Mesh exception below.
+- **Approved Generic Anatomical Base Mesh Exception**: Verified generic anatomical starting meshes from official CC0 sources (such as Blender Foundation's official **Human Base Meshes** bundle) may be loaded natively inside Blender (`bpy.data.libraries.load`) via Blender MCP **only after** recording official source, CC0 license, version, SHA-256 hash, original object IDs, Blender version compatibility, and topology/UV inspection. This exception applies identically across `TEXT_ONLY` and `REFERENCE_GUIDED`.
+- Blender must own modeling, semantic stylization, garments, hair/grooming, sculpting/form refinement, retopology, UVs, materials/textures, rigging, animation, rendering/visual QA, and export/validation. Reference images are visual specifications only, never externally generated geometry.
 
 ## 2. Blender Director Orchestration & Dynamic Routing
 

@@ -248,6 +248,7 @@ def resolve_preflight_policy(
             "blender_only_production": True,
             "external_ai_3d_generators_allowed": False,
             "premade_assets_allowed": False,
+            "approved_generic_base_meshes_allowed": True,
             "reference_images_required": ref_required,
             "reference_images_allowed": ref_allowed,
             "text_specification_available": text_spec_available,

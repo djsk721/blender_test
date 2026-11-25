@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import datetime
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -20,6 +21,19 @@ from .multimodal_qa import _extract_json_object, parse_opencode_json_events
 from .visual_qa import hash_file_sha256
 
 DEFAULT_LIGHT_MODEL_ID = "openai/gpt-6.2-sol#low"
+QWEN_FLASH_NEXT_MODEL_ID = "strata/sc117-qwen38-abliterated-iq3_s"
+
+
+def verify_model_id_lock(actual_model_id: str, expected_model_id: str | None) -> str:
+    """Reject unauthorized silent model substitution (fail-closed)."""
+    actual = str(actual_model_id or "").strip()
+    if not actual:
+        raise ValueError("Model identifier must not be empty.")
+    if expected_model_id is not None and actual != str(expected_model_id).strip():
+        raise ValueError(
+            f"Unauthorized model substitution blocked: expected {expected_model_id!r}, got {actual!r}."
+        )
+    return actual
 
 FROZEN_RUBRIC_MAX_SCORES: dict[str, float] = {
     "reference_fidelity": 25.0,
@@ -75,6 +89,38 @@ ISOLATED_NO_MCP_OPENCODE_CONFIG: dict[str, Any] = {
 }
 
 
+def build_isolated_opencode_env(
+    tmpdir: Path | str,
+    *,
+    mcp_servers: dict[str, Any] | None = None,
+    global_config_path: Path | None = None,
+) -> dict[str, str]:
+    """Create an isolated XDG_CONFIG_HOME OpenCode config stripping global MCP servers.
+
+    Reads ~/.config/opencode/opencode.json read-only (never modifying global files),
+    replaces `mcp.servers` with `mcp_servers or {}`, writes `<tmpdir>/xdg/opencode/opencode.json`,
+    and returns an environment dictionary with `XDG_CONFIG_HOME` pointing there.
+    """
+    tmp = Path(tmpdir)
+    xdg_dir = tmp / "xdg"
+    oc_dir = xdg_dir / "opencode"
+    oc_dir.mkdir(parents=True, exist_ok=True)
+    src_cfg_path = global_config_path or (Path.home() / ".config/opencode/opencode.json")
+    cfg: dict[str, Any] = {"$schema": "https://opencode.ai/config.json"}
+    if src_cfg_path.is_file():
+        try:
+            loaded = json.loads(src_cfg_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                cfg = dict(loaded)
+        except Exception:
+            pass
+    cfg["mcp"] = {"servers": dict(mcp_servers or {})}
+    (oc_dir / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["XDG_CONFIG_HOME"] = str(xdg_dir)
+    return env
+
+
 def detect_quota_error(errors: list[str] | None) -> dict[str, Any] | None:
     """Detect provider HTTP 429 / usage_limit_reached quota exhaustion cleanly."""
     for err in errors or []:
@@ -126,6 +172,7 @@ def invoke_isolated_opencode_vision(
 
     t0 = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="oc_eval_isolated_") as tmpdir:
+        iso_env = build_isolated_opencode_env(tmpdir)
         (Path(tmpdir) / "opencode.json").write_text(
             json.dumps(ISOLATED_NO_MCP_OPENCODE_CONFIG, indent=2),
             encoding="utf-8",
@@ -133,6 +180,7 @@ def invoke_isolated_opencode_vision(
         res = subprocess.run(
             cmd,
             cwd=tmpdir,
+            env=iso_env,
             capture_output=True,
             text=True,
             timeout=timeout_sec,
@@ -221,7 +269,7 @@ class BlindRubricEvaluator:
         timeout_sec: int = 120,
         invoke_fn: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
-        self.model_id = model_id
+        self.model_id = verify_model_id_lock(model_id, None)
         self.timeout_sec = timeout_sec
         self._invoke = invoke_fn or invoke_isolated_opencode_vision
 
@@ -491,7 +539,7 @@ class StageVisualReviewer:
         timeout_sec: int = 120,
         invoke_fn: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
-        self.model_id = model_id
+        self.model_id = verify_model_id_lock(model_id, None)
         self.timeout_sec = timeout_sec
         self._invoke = invoke_fn or invoke_isolated_opencode_vision
 

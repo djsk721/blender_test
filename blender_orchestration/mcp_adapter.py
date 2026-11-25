@@ -21,6 +21,44 @@ DISALLOWED_GENERATOR_MARKERS = ("tripo", "hunyuan", "hyper3d", "meshy", "rodin",
 EXTERNAL_AI_3D_GENERATORS_FORBIDDEN = True
 
 
+def verify_approved_base_mesh_manifest(manifest_path: Path | str) -> dict[str, Any]:
+    """Fail-closed provenance verification for approved generic CC0 anatomical Base Meshes."""
+    import hashlib
+
+    mpath = Path(manifest_path).resolve()
+    if not mpath.is_file():
+        raise PolicyViolationError(f"Base mesh provenance manifest missing: {mpath}")
+    data = json.loads(mpath.read_text(encoding="utf-8"))
+    if not data.get("generic_starting_mesh_confirmed") or not data.get("finished_character_prohibited"):
+        raise PolicyViolationError("Base mesh manifest must confirm generic starting mesh and prohibit finished characters.")
+    if str(data.get("license") or "").upper() not in ("CC0", "CC0-1.0"):
+        raise PolicyViolationError(f"Unapproved base mesh license: {data.get('license')!r}")
+    blend_meta = ((data.get("files") or {}).get("blend_library")) or {}
+    rel_blend = str(blend_meta.get("rel_path") or "")
+    expected_sha = str(blend_meta.get("sha256") or "").lower()
+    blend_path = (mpath.parent / rel_blend).resolve()
+    if not blend_path.is_file() or not expected_sha:
+        raise PolicyViolationError(f"Base mesh blend file or expected SHA-256 missing: {blend_path}")
+    h = hashlib.sha256()
+    with blend_path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    actual_sha = h.hexdigest().lower()
+    if actual_sha != expected_sha:
+        raise PolicyViolationError(
+            f"Base mesh SHA-256 mismatch for {blend_path}: expected {expected_sha}, got {actual_sha}"
+        )
+    return {
+        "verified": True,
+        "manifest_path": str(mpath),
+        "blend_path": str(blend_path),
+        "sha256": actual_sha,
+        "bundle_id": data.get("bundle_id"),
+        "license": data.get("license"),
+        "publisher": data.get("publisher"),
+    }
+
+
 class MCPAdapterError(RuntimeError):
     """Base error for MCP adapter failures."""
 
