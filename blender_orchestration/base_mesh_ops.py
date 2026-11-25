@@ -34,20 +34,20 @@ def _require_blender() -> None:
 
 # Allowed semantic stylization parameter ranges (validated & clamped)
 SEMANTIC_CONTROL_LIMITS: dict[str, tuple[float, float]] = {
-    "head_scale": (-0.5, 0.6),
-    "eye_size": (-0.4, 0.6),
-    "eye_separation": (-0.4, 0.5),
-    "jaw_width": (-0.5, 0.5),
-    "chin_length": (-0.4, 0.5),
-    "nose_size": (-0.4, 0.5),
+    "head_scale": (-0.30, 0.22),
+    "eye_size": (-0.25, 0.28),
+    "eye_separation": (-0.18, 0.18),
+    "jaw_width": (-0.35, 0.30),
+    "chin_length": (-0.30, 0.30),
+    "nose_size": (-0.30, 0.30),
     "ear_pointedness": (0.0, 1.0),
-    "shoulder_width": (-0.45, 0.5),
-    "waist_taper": (-0.5, 0.5),
-    "hip_width": (-0.45, 0.5),
-    "torso_length": (-0.35, 0.35),
-    "limb_slenderness": (-0.45, 0.45),
-    "hand_scale": (-0.4, 0.5),
-    "neck_length": (-0.35, 0.45),
+    "shoulder_width": (-0.30, 0.25),
+    "waist_taper": (-0.35, 0.25),
+    "hip_width": (-0.25, 0.25),
+    "torso_length": (-0.25, 0.25),
+    "limb_slenderness": (-0.30, 0.30),
+    "hand_scale": (-0.25, 0.20),
+    "neck_length": (-0.25, 0.25),
 }
 
 
@@ -638,13 +638,22 @@ def apply_semantic_stylization(obj: Any, controls: dict[str, float]) -> dict[str
     if obj.type != "MESH" or obj.data is None:
         raise ValueError(f"Expected MESH object, got {obj.type}")
 
-    # Validate & clamp every supplied control parameter strictly within approved ranges
+    # Auto-normalize multiplier-style inputs (e.g. 0.93 / 1.0 / 1.06) to signed deltas around 0.0 before clamping
+    raw_items = {
+        key: float(raw_val)
+        for key, raw_val in (controls or {}).items()
+        if key in SEMANTIC_CONTROL_LIMITS
+    }
+    non_ear_vals = [val for key, val in raw_items.items() if key != "ear_pointedness"]
+    is_multiplier_style = any(val >= 0.70 for val in non_ear_vals) or (
+        sum(1 for val in non_ear_vals if 0.65 <= val <= 1.45) >= 2
+    )
     validated: dict[str, float] = {}
-    for key, raw_val in (controls or {}).items():
-        if key not in SEMANTIC_CONTROL_LIMITS:
-            continue
+    for key, val in raw_items.items():
+        if is_multiplier_style and key != "ear_pointedness" and val >= 0.60:
+            val = val - 1.0
         lo, hi = SEMANTIC_CONTROL_LIMITS[key]
-        validated[key] = max(lo, min(hi, float(raw_val)))
+        validated[key] = max(lo, min(hi, val))
 
     mesh = obj.data
     if not mesh.shape_keys:
@@ -1007,22 +1016,26 @@ def create_chest_plastron_panel(
     if not torso_front:
         torso_front = [Vector((0.0, -0.09, 0.5 * (zlo + zhi)))]
 
-    nx, nzr = 9, 11
+    nx, nzr = 11, 17
     bm = bmesh.new()
     grid: list[list[Any]] = []
     for r in range(nzr):
         t_z = r / (nzr - 1)
         gz = zlo * (1.0 - t_z) + zhi * t_z
-        taper = 0.82 + 0.18 * (t_z ** 0.7)
-        quilt_rib = 0.0025 * abs(math.sin(math.pi * max(1, int(quilt_rows)) * t_z))
+        row_hw = float(half_width) * (0.78 + 0.36 * (t_z ** 0.85))
+        quilt_puff = 0.0038 * abs(math.sin(t_z * math.pi * max(2, int(quilt_rows))))
         row_verts: list[Any] = []
         for c_idx in range(nx):
             fx = (2.0 * c_idx / (nx - 1)) - 1.0  # -1..+1
-            gx = fx * float(half_width) * taper
+            u_abs = abs(fx)
+            corner_round = 1.0 - 0.14 * (t_z ** 3) * (u_abs ** 2)
+            gx = fx * row_hw * corner_round
             nearest = sorted(torso_front, key=lambda v: (v.x - gx) ** 2 + 1.4 * ((v.z - gz) ** 2))[:4]
             fy = min(v.y for v in nearest)
-            edge_tuck = 0.002 if abs(fx) > 0.90 else 0.0
-            gy = fy - float(surface_offset_m) - quilt_rib + edge_tuck
+            is_welt = u_abs >= 0.85 or t_z <= 0.08 or t_z >= 0.92
+            welt_lift = 0.0024 if is_welt else 0.0
+            edge_tuck = 0.002 if u_abs > 0.92 else 0.0
+            gy = fy - float(surface_offset_m) - quilt_puff - welt_lift + edge_tuck
             row_verts.append(bm.verts.new(Vector((gx, gy, gz))))
         grid.append(row_verts)
 
@@ -1417,9 +1430,9 @@ def create_fitted_boots(
         tcx, tcy, trx, try_ = _band(shaft_top_z - 0.025, shaft_top_z + 0.025, 0.056, 0.064)
 
         sections = [
-            {"center": (fcx, fcy + 0.002, 0.000), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 1.08},
-            {"center": (fcx, fcy + 0.002, sole_thickness), "rx": frx * 1.10, "ry": fry * 1.09, "squash_front": 1.03, "squash_back": 1.08},
-            {"center": (fcx, fcy + 0.002, sole_thickness + 0.012), "rx": frx * 1.03, "ry": fry * 0.96, "squash_front": 1.03, "squash_back": 1.08},
+            {"center": (fcx, fcy + 0.002, 0.000), "rx": frx * 1.12, "ry": fry * 1.11, "squash_front": 1.03, "squash_back": 1.08},
+            {"center": (fcx, fcy + 0.002, sole_thickness), "rx": frx * 1.12, "ry": fry * 1.11, "squash_front": 1.03, "squash_back": 1.08},
+            {"center": (fcx, fcy + 0.002, sole_thickness + 0.006), "rx": frx * 1.01, "ry": fry * 0.95, "squash_front": 1.03, "squash_back": 1.08},
             {"center": (0.5 * (fcx + acx), fcy * 0.50 + acy * 0.50 + 0.004, 0.064), "rx": frx * 1.00, "ry": fry * 0.84, "squash_front": 1.04, "squash_back": 1.08},
             {"center": (acx, acy + 0.003, ankle_z_est + 0.012), "rx": arx, "ry": ary + 0.004, "squash_front": 1.0, "squash_back": 1.08},
             {"center": (mcx, mcy, 0.5 * (ankle_z_est + shaft_top_z)), "rx": mrx, "ry": mry},
@@ -1442,10 +1455,12 @@ def create_fitted_boots(
         # Clamp X radius so left and right cuffs stay cleanly separated across the inner ankle
         cuff_rx = min(trx + 0.011, max(0.042, abs(tcx) - 0.009))
         cuff_ry = try_ + 0.011
+        top_rx = min(trx + 0.006, max(0.040, abs(tcx) - 0.011))
+        top_ry = try_ + 0.006
         cuff_secs = [
             {"center": (tcx, tcy, c_bot), "rx": cuff_rx, "ry": cuff_ry},
-            {"center": (tcx, tcy, 0.5 * (c_bot + c_top)), "rx": cuff_rx + 0.001, "ry": cuff_ry + 0.002},
-            {"center": (tcx, tcy, c_top), "rx": cuff_rx, "ry": cuff_ry},
+            {"center": (tcx, tcy, 0.5 * (c_bot + c_top)), "rx": cuff_rx + 0.003, "ry": cuff_ry + 0.003},
+            {"center": (tcx, tcy, c_top), "rx": top_rx, "ry": top_ry},
         ]
         cobj = bt.loft_sections(
             f"{name}_Cuff_{side_tag}",
@@ -1909,7 +1924,7 @@ def build_layered_curve_hair(
             continue
         # Exclude face front below forehead AND pointed ears / lower jaw while covering temples + crown + rear skull
         if abs(c.x) <= 0.050 and c.y < head_cy - 0.02:
-            is_crown = c.z > eye_z + 0.056
+            is_crown = c.z > eye_z + 0.068
         else:
             is_crown = c.z > eye_z + 0.044
         is_temple = abs(c.x) > 0.048 and abs(c.x) <= skull_half_w + 0.004 and c.z >= eye_z + 0.004 and c.y > head_cy - 0.052
@@ -1950,7 +1965,9 @@ def build_layered_curve_hair(
             if v.is_boundary:
                 radial = head_cx - v.co
                 if radial.length > 1e-4:
-                    v.co += radial.normalized() * min(scalp_offset_m * 0.65, 0.007)
+                    tuck_cap = 0.009 if v.co.y < head_cy - 0.02 else 0.007
+                    tuck_scale = 0.85 if v.co.y < head_cy - 0.02 else 0.65
+                    v.co += radial.normalized() * min(scalp_offset_m * tuck_scale, tuck_cap)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
         scalp_obj = bt._finalize_bmesh_object(f"{name_prefix}_ScalpCap", bm, collection=col, smooth=True, subsurf=0)
         bt.add_modifiers(scalp_obj, solidify=scalp_thickness_eff, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
@@ -1993,11 +2010,11 @@ def build_layered_curve_hair(
             x_lower = frac * 0.178
             z_tip = z_tip_base + (abs(frac) * 0.09) + (0.045 if i % 2 else 0.0)
             x_tip = frac * 0.195
-            y_tip = max(y_lower + 0.006, y_clear + 0.032)
+            y_tip = max(y_lower + 0.008, y_clear + 0.036)
             prim_list.append(
                 {
                     "points": [r_p, p_emerge, (x_upper, y_upper, z_upper), (x_lower, y_lower, z_lower), (x_tip, y_tip, z_tip)],
-                    "radii": [0.22, 1.18, 1.28, 0.78, 0.05],
+                    "radii": [0.26, 1.22, 1.32, 0.92, 0.18],
                     "width_scale": 1.35 if abs(frac) < 0.5 else 1.15,
                     "tilts_deg": [frac * 18.0, frac * 16.0, frac * 15.0, frac * 12.0, frac * 8.0],
                 }
@@ -2009,8 +2026,8 @@ def build_layered_curve_hair(
             p_em = _snap_head(x_r * 1.15, head_cy + 0.095, head_top_z - 0.055, 0.016)
             p1 = (frac * 0.142, y_clear + 0.030, head_top_z * 0.65 + z_tip_base * 0.35 + 0.04)
             p2 = (frac * 0.172, y_clear + 0.038, head_top_z * 0.30 + z_tip_base * 0.70 + 0.05)
-            p3 = (frac * 0.188, y_clear + 0.046, z_tip_base + 0.04 + (j % 3) * 0.045)
-            sec_list.append({"points": [p0, p_em, p1, p2, p3], "radii": [0.22, 0.98, 1.08, 0.72, 0.05], "width_scale": 0.98})
+            p3 = (frac * 0.188, y_clear + 0.048, z_tip_base + 0.04 + (j % 3) * 0.045)
+            sec_list.append({"points": [p0, p_em, p1, p2, p3], "radii": [0.24, 1.04, 1.12, 0.78, 0.16], "width_scale": 0.98})
 
     if auto_side_locks:
         scfg = auto_side_locks if isinstance(auto_side_locks, dict) else {}
@@ -2041,28 +2058,35 @@ def build_layered_curve_hair(
             sec_list.append({"points": [tp0, tp1, tp2], "radii": [0.25, 0.85, 0.10], "width_scale": 0.76})
             # 3 overlapping center-parted bangs per side sweeping cleanly toward temples strictly ABOVE eyebrows
             for b_k, bx_s, bx_e in ((0, 0.006, 0.055), (1, 0.022, 0.078), (2, 0.045, 0.096)):
+                z_bp1 = max(brow_z + 0.018 - b_k * 0.003, brow_z + 0.012, eye_z + 0.052)
+                z_bp2 = max(brow_z + 0.011, eye_z + 0.040)
                 bp0 = _snap_head(sg * bx_s, head_cy - 0.068, eye_z + 0.088, 0.004)
-                bp1 = _snap_head(sg * (0.5 * (bx_s + bx_e)), head_cy - 0.078, max(brow_z + 0.022 - b_k * 0.004, eye_z + 0.052), 0.013)
-                bp2 = _snap_head(sg * bx_e, head_cy - 0.062, max(brow_z + 0.010, eye_z + 0.038), 0.011)
-                sec_list.append({"points": [bp0, bp1, bp2], "radii": [0.25, 0.58, 0.08], "width_scale": 0.56})
+                bp1 = _snap_head(sg * (0.5 * (bx_s + bx_e)), head_cy - 0.078, z_bp1, 0.013)
+                bp2 = _snap_head(sg * bx_e, head_cy - 0.062, z_bp2, 0.011)
+                sec_list.append({"points": [bp0, bp1, bp2], "radii": [0.30, 0.90, 0.16], "width_scale": 0.80})
 
     if auto_crown_braid:
         bcfg = auto_crown_braid if isinstance(auto_crown_braid, dict) else {}
-        crown_pts = []
-        for k in range(7):
-            u = k / 6.0  # -X right temple -> top crown -> +X left temple
-            ang = math.pi * u
-            bx = -math.cos(ang) * 0.095
-            bz = eye_z + 0.045 + math.sin(ang) * max(0.065, head_top_z - eye_z - 0.032)
-            by = head_cy - 0.028 - 0.012 * math.sin(ang)
-            crown_pts.append(_snap_head(bx, by, bz, float(bcfg.get("outward_m", 0.020))))
-        braid_list.append(
-            {
-                "points": crown_pts,
-                "radius": float(bcfg.get("radius", 0.017)),
-                "twists": float(bcfg.get("twists", 12.0)),
-            }
-        )
+        b_out = float(bcfg.get("outward_m", 0.025))
+        b_rad = float(bcfg.get("radius", 0.020))
+        b_twists = float(bcfg.get("twists", 14.0))
+        for strand_phase in (0.0, math.pi):
+            crown_pts = []
+            for k in range(13):
+                u = k / 12.0  # -X right temple -> top crown -> +X left temple
+                ang = math.pi * u
+                weave = 0.0055 * math.sin(ang * 6.0 + strand_phase)
+                bx = -math.cos(ang) * 0.095
+                bz = eye_z + 0.045 + math.sin(ang) * max(0.065, head_top_z - eye_z - 0.032) + weave * 0.65
+                by = head_cy - 0.028 - 0.012 * math.sin(ang) + weave * 0.75
+                crown_pts.append(_snap_head(bx, by, bz, b_out))
+            braid_list.append(
+                {
+                    "points": crown_pts,
+                    "radius": b_rad,
+                    "twists": b_twists,
+                }
+            )
 
     # 2. Layered directional Bezier curve hair locks with custom sculpted bevel profile & per-point radius taper
     prof_obj = _ensure_hair_bevel_profile()
@@ -2111,6 +2135,7 @@ def build_layered_curve_hair(
         joined_locks = bt.join_objects(lock_meshes, f"{name_prefix}_LayeredLocks", collection=col)
         created_objs.append(joined_locks)
 
+    braid_meshes: list[Any] = []
     for b_idx, bspec in enumerate(braid_list):
         pts = [_clamp_hair_point(p, head_top_z) for p in (bspec.get("points") or [])]
         if len(pts) >= 2:
@@ -2121,7 +2146,14 @@ def build_layered_curve_hair(
                 twists=float(bspec.get("twists", 7.0)),
                 collection=col,
             )
-            created_objs.append(bobj)
+            braid_meshes.append(bobj)
+    if braid_meshes:
+        joined_braid = (
+            bt.join_objects(braid_meshes, f"{name_prefix}_Braid_0", collection=col)
+            if len(braid_meshes) > 1
+            else braid_meshes[0]
+        )
+        created_objs.append(joined_braid)
 
     return {
         "created_objects": [o.name for o in created_objs],

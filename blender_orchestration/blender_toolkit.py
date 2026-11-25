@@ -66,6 +66,26 @@ def ensure_clean_scene(
     if bpy.context.window:
         bpy.context.window.scene = scene
 
+    for other_sc in list(bpy.data.scenes):
+        if other_sc != scene:
+            for obj in list(other_sc.objects):
+                try:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+                except Exception:
+                    pass
+            try:
+                bpy.data.scenes.remove(other_sc)
+            except Exception:
+                pass
+
+    for d_name in ("Cube", "Light", "Camera"):
+        d_obj = bpy.data.objects.get(d_name)
+        if d_obj is not None and d_obj.name not in scene.objects:
+            try:
+                bpy.data.objects.remove(d_obj, do_unlink=True)
+            except Exception:
+                pass
+
     scene.unit_settings.system = "METRIC"
     scene.unit_settings.scale_length = 1.0
     get_or_create_collection(scene, export_collection)
@@ -2033,7 +2053,27 @@ def make_pbr_material(
 
 def assign_material(obj: Any, mat: Any) -> None:
     _require_blender()
-    if obj.type != "MESH" or obj.data is None:
+    if isinstance(obj, bpy.types.Material) and not isinstance(mat, bpy.types.Material):
+        obj, mat = mat, obj
+    if isinstance(mat, str):
+        mat = bpy.data.materials.get(mat)
+    if mat is None:
+        return
+    if obj is None or isinstance(obj, (int, float, bool)):
+        return
+    if isinstance(obj, dict):
+        for v in obj.values():
+            assign_material(v, mat)
+        return
+    if isinstance(obj, (list, tuple, set)):
+        for v in obj:
+            assign_material(v, mat)
+        return
+    if isinstance(obj, str):
+        obj = bpy.data.objects.get(obj)
+        if obj is None:
+            return
+    if getattr(obj, "type", None) != "MESH" or obj.data is None:
         return
     obj.data.materials.clear()
     obj.data.materials.append(mat)
@@ -2804,6 +2844,7 @@ def create_cycle_animation(
         bpy.data.actions.remove(old)
     action = bpy.data.actions.new(name=action_name)
     armature_obj.animation_data.action = action
+    armature_obj.data.pose_position = "POSE"
 
     scene = bpy.context.scene
     scene.frame_start = int(frame_start)
@@ -2846,6 +2887,7 @@ def create_cycle_animation(
             keyed_bones.add(bname)
 
     scene.frame_set(int(frame_start))
+    bpy.context.view_layer.update()
     return {
         "action_name": action.name,
         "frame_start": int(frame_start),

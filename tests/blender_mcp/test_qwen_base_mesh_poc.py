@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from blender_orchestration.autonomous_harness import _scene_completeness_tier  # noqa: E402
 from blender_orchestration.blender_toolkit import collect_resource_snapshot  # noqa: E402
 from blender_orchestration.mcp_adapter import (  # noqa: E402
     MCPAdapter,
@@ -119,6 +120,7 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "from blender_orchestration import blender_toolkit as bt\n"
                     "from blender_orchestration import base_mesh_ops as bmo\n"
                     "scene = bt.ensure_clean_scene('SCENE_TestBaseMesh')\n"
+                    "clean_no_cube = ('Cube' not in bpy.data.objects)\n"
                     "col = bt.get_or_create_collection(scene, 'COL_Export')\n"
                     f"res = bmo.verify_and_load_base_mesh(scene, {json.dumps(str(MANIFEST))}, 'GEO-body_female_stylized', target_height_m=1.65, collection=col, new_name='SM_BaseBody')\n"
                     "body = res['object']\n"
@@ -126,6 +128,8 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "actual_eye_z = 0.5 * (min(v.z for v in eye_l_pts) + max(v.z for v in eye_l_pts))\n"
                     "lm_eye_z = res['landmarks']['landmarks']['eye_L'][2]\n"
                     "hand_y_before = res['landmarks']['landmarks']['hand_L'][1]\n"
+                    "sty_mult = bmo.apply_semantic_stylization(body, {'head_scale': 0.93, 'eye_size': 1.0, 'hip_width': 1.0, 'waist_taper': 1.06, 'ear_pointedness': 0.85})\n"
+                    "integ_mult = bmo.audit_base_mesh_integrity(scene)\n"
                     "sty = bmo.apply_semantic_stylization(body, {'head_scale': 0.1, 'eye_size': 0.2, 'ear_pointedness': 0.85, 'waist_taper': -0.15})\n"
                     "sty = bmo.apply_semantic_stylization(body, {'head_scale': 0.1, 'eye_size': 0.2, 'ear_pointedness': 0.85, 'waist_taper': -0.15})\n"
                     "body_eval_v, _ = bmo._eval_mesh_world_verts(body)\n"
@@ -246,6 +250,8 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "bt.assign_material(sleeve_l, m_tunic)\n"
                     "bt.assign_material(hem_trim, m_gold)\n"
                     "bt.assign_material(boots_res['boots'], m_boot)\n"
+                    "bt.assign_material(boots_res, 'MAT_Leather_Brown')\n"
+                    "dict_mat_ok = (len(boots_res['boots'].data.materials) == 1 and boots_res['boots'].data.materials[0].name == 'MAT_Leather_Brown')\n"
                     "bt.assign_material(boots_res['cuff'], m_skin)\n"
                     "bt.assign_material(belt_res['belt'], m_boot)\n"
                     "bt.assign_material(belt_res['buckle'], m_gold)\n"
@@ -270,9 +276,15 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "scene.frame_set(1)\n"
                     f"exp = bt.export_and_verify_glb(scene, {json.dumps(str(glb_path))})\n"
                     "audit = bt.get_scene_audit(scene)\n"
-                    "print('__ORCH_JSON__:' + json.dumps({'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'body_mat_count': body_mat_count, 'head_x_span': head_x_span, 'hand_l_drift': hand_l_drift, 'hand_max_spread': hand_max_spread, 'arm_l_max_x': arm_l_max_x, 'arm_l_min_z': arm_l_min_z, 'stranded_fingertips': stranded_fingertips, 'plastron_min_y': plastron_min_y, 'leg_max_abs_x': leg_max_abs_x, 'rune_tex_ok': rune_tex_ok, 'cuff_gap_x': cuff_gap_x, 'skin_sss_scale': skin_sss_scale, 'hand_z_after': hand_z_after, 'sleeve_min_y': sleeve_min_y, 'skirt_min_z': min(skirt_zs), 'skirt_x_span': max(skirt_xs)-min(skirt_xs), 'skirt_y_span': max(skirt_ys)-min(skirt_ys), 'belt_names': [belt_res['belt_name'], belt_res['buckle_name']], 'scalp_x_span': max(scalp_xs)-min(scalp_xs), 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'integ_eye_occ_ok': integ_eye_occ['ok'], 'integ_eye_split_ok': integ_eye_split['ok'], 'integ_prim_hand_ok': integ_prim_hand['ok'], 'integ_bloated_skirt_ok': integ_bloated_skirt['ok'], 'integ_bad_prop_ok': integ_bad_prop['ok'], 'integ_bodice_split_ok': integ_bodice_split['ok'], 'integ_prim_obj_ok': integ_prim_obj['ok'], 'backdrop_purged': backdrop_purged, 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'anim_poses_distinct': (r1 != r7 and r7 != r13 and lr1 != lr7), 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
+                    "print('__ORCH_JSON__:' + json.dumps({'clean_no_cube': clean_no_cube, 'sty_mult_vc': sty_mult['validated_controls'], 'integ_mult_ok': integ_mult['ok'], 'dict_mat_ok': dict_mat_ok, 'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'body_mat_count': body_mat_count, 'head_x_span': head_x_span, 'hand_l_drift': hand_l_drift, 'hand_max_spread': hand_max_spread, 'arm_l_max_x': arm_l_max_x, 'arm_l_min_z': arm_l_min_z, 'stranded_fingertips': stranded_fingertips, 'plastron_min_y': plastron_min_y, 'leg_max_abs_x': leg_max_abs_x, 'rune_tex_ok': rune_tex_ok, 'cuff_gap_x': cuff_gap_x, 'skin_sss_scale': skin_sss_scale, 'hand_z_after': hand_z_after, 'sleeve_min_y': sleeve_min_y, 'skirt_min_z': min(skirt_zs), 'skirt_x_span': max(skirt_xs)-min(skirt_xs), 'skirt_y_span': max(skirt_ys)-min(skirt_ys), 'belt_names': [belt_res['belt_name'], belt_res['buckle_name']], 'scalp_x_span': max(scalp_xs)-min(scalp_xs), 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'integ_eye_occ_ok': integ_eye_occ['ok'], 'integ_eye_split_ok': integ_eye_split['ok'], 'integ_prim_hand_ok': integ_prim_hand['ok'], 'integ_bloated_skirt_ok': integ_bloated_skirt['ok'], 'integ_bad_prop_ok': integ_bad_prop['ok'], 'integ_bodice_split_ok': integ_bodice_split['ok'], 'integ_prim_obj_ok': integ_prim_obj['ok'], 'backdrop_purged': backdrop_purged, 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'anim_poses_distinct': (r1 != r7 and r7 != r13 and lr1 != lr7), 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
                 )
                 out = adapter.execute_blender_json(code, user_prompt="Test Base Mesh PoC", stage="test_base_mesh")["parsed"]
+                self.assertTrue(out["clean_no_cube"])
+                self.assertAlmostEqual(out["sty_mult_vc"]["head_scale"], -0.07, delta=1e-4)
+                self.assertAlmostEqual(out["sty_mult_vc"]["eye_size"], 0.0, delta=1e-4)
+                self.assertAlmostEqual(out["sty_mult_vc"]["ear_pointedness"], 0.85, delta=1e-4)
+                self.assertTrue(out["integ_mult_ok"])
+                self.assertTrue(out["dict_mat_ok"])
                 self.assertEqual(out["rot_deg"], 0.0)
                 self.assertAlmostEqual(out["lm_eye_z"], out["actual_eye_z"], delta=0.005)
                 self.assertTrue(out["face_res"]["ok"])
@@ -326,6 +338,11 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
         finally:
             adapter.close()
             resetter.reset_for_next_model(start_fresh_blender=False)
+
+    def test_06_completeness_tier_ranks_full_build_above_bald_propless(self) -> None:
+        full_audit = {"meshes": [{"name": "SM_BaseBody"}, {"name": "SM_Hair_LayeredLocks"}, {"name": "SM_Prop_RunicSlate"}, *[{"name": f"SM_G{i}"} for i in range(12)]]}
+        bald_audit = {"meshes": [{"name": "SM_BaseBody"}, *[{"name": f"SM_G{i}"} for i in range(21)]]}
+        self.assertGreater(_scene_completeness_tier(full_audit), _scene_completeness_tier(bald_audit))
 
 
 if __name__ == "__main__":

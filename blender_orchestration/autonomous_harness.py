@@ -106,7 +106,7 @@ Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground
    - Verifies SHA-256 provenance, loads approved Human Base Mesh natively, grounds `min_z=0.0`, faces `-Y`, creates `ANAT_*` groups, returns `{"object": obj, "landmarks": {"landmarks": {...}}}`.
 2. `bmo.inspect_anatomical_regions(body_obj)` -> returns verified anatomical landmark coordinates (`neck`, `head_center`, `eye_L`, `eye_R` from true eye sockets, `eye_radius_m`, `ear_L`, `ear_R`, `shoulder_L/R`, `waist`, `hips`, `elbow_L/R`, `wrist_L/R`, `hand_L/R`, `knee_L/R`, `ankle_L/R`, `foot_L/R`).
 3. `bmo.apply_semantic_stylization(body_obj, controls)`
-   - Controls (clamped): `head_scale`, `eye_size`, `eye_separation`, `jaw_width`, `chin_length`, `nose_size`, `ear_pointedness`, `shoulder_width`, `waist_taper`, `hip_width`, `torso_length`, `limb_slenderness`, `hand_scale`, `neck_length`. Syncs companion eyes idempotently.
+   - Controls MUST be **SIGNED DELTAS around 0.0** (NEVER `1.0` multipliers! `GEO-body_female_stylized` already has a large ~5.5-head stylized head, so use `head_scale=-0.08` for 6.5-head heroic proportions): `head_scale`, `eye_size`, `eye_separation`, `jaw_width`, `chin_length`, `nose_size`, `ear_pointedness`, `shoulder_width`, `waist_taper`, `hip_width`, `torso_length`, `limb_slenderness`, `hand_scale`, `neck_length`. Syncs companion eyes idempotently.
 4. `bmo.style_face_features(body_obj, iris_hex="#2EA87A", pupil_hex="#0B1318", sclera_hex="#F7F7F5", brow_hex="#9A7236", lip_hex="#D98B7C", lash_hex="#2A1E1A", eye_scale=1.0, collection=col_export)`
    - Seats stylized emerald anime eyeballs cleanly in orbital sockets + surface-snapped `SM_Eyelashes` & `SM_Eyebrows` + lip tint on `SM_BaseBody` (NEVER create a separate floating `GEO_Mouth_Lips`!).
 5. `bmo.extract_garment_from_body(body_obj, name, z_min=..., z_max=..., x_abs_max=0.18, x_abs_min=None, side=None, y_min=None, y_max=None, surface_offset_m=0.008, thickness_m=0.004, bottom_flare=0.0, top_collar_flare=0.0, add_shrinkwrap=False, subsurf=1, collection=col_export)`
@@ -116,8 +116,8 @@ Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground
 7. `bmo.create_flared_skirt_from_waist(body_obj, name="SM_Tunic_Skirt", waist_z=None, hem_z=0.70, flare_radius_add=0.060, collection=col_export)`
    - Builds a sleek continuous pleated A-line tunic peplum/skirt from waist past hips (arm-excluded, zero bloat or thigh split!).
 8. `bmo.create_fitted_waist_belt(body_obj, name="SM_Belt", waist_z=None, belt_height=0.052, add_buckle=True, collection=col_export)` -> returns `{"belt": belt_obj, "buckle": buckle_obj}`.`
-8. `bmo.extract_sleeve_from_arm(body_obj, name, side="L", start_frac=0.04, end_frac=0.88, surface_offset_m=0.010, thickness_m=0.004, cuff_flare=0.008, subsurf=1, collection=col_export)`
-   - Call AFTER `pose_arm_for_prop_hold` so sleeves follow posed/bent arms seamlessly (ZERO floating A-pose tubes!).
+8. `bmo.extract_sleeve_from_arm(body_obj, name, side="L", start_frac=0.04, end_frac=0.84, surface_offset_m=0.010, thickness_m=0.004, cuff_flare=0.008, subsurf=1, collection=col_export)`
+   - Call AFTER `pose_arm_for_prop_hold` so sleeves follow posed/bent arms seamlessly (stop `SM_Sleeve_Cream_L/R` cleanly at the wrist `end_frac=0.82..0.85`, and do NOT create hollow `SM_Glove_*` or sleeve tubes extending past `0.86` over the palm/fingers!).
 9. `bmo.create_fitted_boots(body_obj, name="SM_Boots", shaft_top_z=0.30, cuff_height=0.068, sole_thickness=0.018, clearance_m=0.017, collection=col_export)`
    - Lofts smooth grounded mid-calf boots & fold-over cuffs enveloping feet cleanly (`min_z=0.0`, ZERO toe-crevice or heel poke-through!).
 10. `bmo.extract_hem_trim_from_garment(garment_obj, name, edge="bottom", band_height_m=0.022, surface_offset_m=0.004, thickness_m=0.003, collection=col_export)`
@@ -129,6 +129,16 @@ Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground
 14. SCRIPTING, MATERIAL & STUDIO RULES: Keep scripts CONCISE (<180 lines) using `bmo.*`, `bt.make_pbr_material(name, '#RRGGBB', roughness=..., metallic=..., subsurface=..., sheen=..., surface_type='skin'|'fabric'|'leather'|'hair'|'metal')`, and `bt.create_painted_image_texture("T_RunicSlate_Rune", size=1024, base_hex="#181C24", accent_hex="#30E8FF", pattern="rune_lens")` directly — NEVER write a custom `make_mat()` function, NEVER overwrite `MAT_Skin_*` `Base Color` with pale linear tuples `(0.90, ...)` (ALWAYS use warm stylized peach hex `'#E8B088'` with `surface_type='skin', roughness=0.55, subsurface=0.06`!), NEVER leave unnamed default primitives (`Cube*`, `Cylinder*`, `Sphere*`, `Plane*`) in `col_export` or paste primitive cylinders onto the slate, NEVER split a script into Part 1/2, NEVER use `Matrix.to_decomposition()` (use `.decompose()`), NEVER delete/collapse `SM_BaseBody` hands or build primitive `SM_Hand_L/R` replacements, NEVER use raw `primitive_cube_add` for `SM_Prop_RunicSlate`, NEVER assign per-polygon multi-material splits onto `SM_Tunic_Bodice`, `SM_Tunic_Skirt`, `SM_BaseBody`, or `SM_BaseBody_Eye_L`/`R`, NEVER link `SM_Studio_*` to `col_export`, and NEVER create custom studio backdrops, floors, lights, or cameras!
 15. RIGGING & ANIMATION: `bt.create_rig_and_bind(scene, bone_specs, armature_name='ARM_Asset')` returns a **`dict`** (`{"armature_name": "ARM_Asset", ...}`), NOT a Blender Object — ALWAYS fetch `arm_obj = bpy.data.objects['ARM_Asset']` (NEVER check `res.type` or access deprecated Blender 3.x `bone.layers`!). Then call `bt.create_cycle_animation(arm_obj, {1: {"L_leg_upper": (34, 0, 0), "L_leg_lower": (-22, 0, 0), "R_leg_upper": (-30, 0, 0), ...}, 7: {...}, 13: {...}, 24: {...}}, action_name="ACT_RunCycle")` — pass canonical `{frame: {bone: (rx_deg, ry_deg, rz_deg)}}` in DEGREES (NOT `math.radians`!). Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
 """
+
+
+def _scene_completeness_tier(audit: dict[str, Any]) -> tuple[int, int]:
+    """Rank scene completeness so fuller clothed/haired/propped builds beat stripped scenes."""
+    names = [str(m.get("name", "")).lower() for m in (audit.get("meshes") or [])]
+    has_body = any("basebody" in n for n in names)
+    has_hair = any(("hair" in n or "braid" in n) for n in names)
+    has_prop = any(("prop" in n or "slate" in n or "tablet" in n) for n in names)
+    tier = (1 if has_body else 0) + (2 if has_hair else 0) + (2 if has_prop else 0) + (1 if len(names) >= 12 else 0)
+    return (tier, len(names))
 
 
 def _format_compact_scene_inventory(audit: dict[str, Any], anomalies: dict[str, Any] | None = None) -> str:
@@ -346,6 +356,9 @@ class AutonomousBlenderHarness:
         """Execute agent-authored bpy code inside Blender via MCP with automatic checkpoint recovery."""
         ckpt_str = str(fallback_checkpoint) if (fallback_checkpoint and fallback_checkpoint.is_file()) else ""
         manifest_str = str(Path(base_mesh_manifest).resolve()) if base_mesh_manifest else ""
+        check_preserve = bool(base_mesh_manifest) and any(
+            tok in stage_label for tok in ("geometry_fix", "lookdev", "rig_anim")
+        )
         wrapper = (
             "import importlib, json, math, sys, traceback\n"
             f"if {json.dumps(str(self.project_root))} not in sys.path:\n"
@@ -360,6 +373,7 @@ class AutonomousBlenderHarness:
             f"OUT_DIR = {json.dumps(str(out_dir))}\n"
             f"BASE_MESH_MANIFEST = {json.dumps(manifest_str)}\n"
             f"_CKPT = {json.dumps(ckpt_str)}\n"
+            f"_CHECK_PRESERVE = {json.dumps(check_preserve)}\n"
             "if SCENE_NAME not in bpy.data.scenes:\n"
             "    if _CKPT:\n"
             "        bpy.ops.wm.open_mainfile(filepath=_CKPT)\n"
@@ -372,6 +386,9 @@ class AutonomousBlenderHarness:
             "col_export = bt.get_or_create_collection(scene, 'COL_Export')\n"
             "col_rig = bt.get_or_create_collection(scene, 'COL_Rig')\n"
             "col_studio = bt.get_or_create_collection(scene, 'COL_Studio')\n"
+            "_pre_names = [o.name.lower() for o in col_export.all_objects if o.type == 'MESH']\n"
+            "_pre_has_hair = any(('hair' in n or 'braid' in n) for n in _pre_names)\n"
+            "_pre_has_prop = any(('prop' in n or 'slate' in n or 'tablet' in n) for n in _pre_names)\n"
             "_user_code = " + json.dumps(agent_code) + "\n"
             "_ns = {\n"
             "    'bpy': bpy, 'bmesh': bmesh, 'bt': bt, 'bmo': bmo, 'math': math, 'json': json,\n"
@@ -381,6 +398,12 @@ class AutonomousBlenderHarness:
             "}\n"
             "try:\n"
             "    exec(_user_code, _ns)\n"
+            "    if _CHECK_PRESERVE:\n"
+            "        _post_names = [o.name.lower() for o in col_export.all_objects if o.type == 'MESH']\n"
+            "        if _pre_has_hair and not any(('hair' in n or 'braid' in n) for n in _post_names):\n"
+            "            raise RuntimeError('Script deleted existing hair meshes without rebuilding SM_Hair_*! Preserve or rebuild hair.')\n"
+            "        if _pre_has_prop and not any(('prop' in n or 'slate' in n or 'tablet' in n) for n in _post_names):\n"
+            "            raise RuntimeError('Script deleted existing handheld prop without rebuilding SM_Prop_*! Preserve or rebuild prop.')\n"
             "    if BASE_MESH_MANIFEST and bpy.data.objects.get('SM_BaseBody') is not None:\n"
             "        _integ = bmo.audit_base_mesh_integrity(scene)\n"
             "        if not _integ.get('ok'):\n"
@@ -389,6 +412,11 @@ class AutonomousBlenderHarness:
             "    print('__ORCH_JSON__:' + json.dumps({'ok': True, 'audit': audit}))\n"
             "except Exception as _exc:\n"
             "    tb = traceback.format_exc()\n"
+            "    if _CKPT:\n"
+            "        try:\n"
+            "            bpy.ops.wm.open_mainfile(filepath=_CKPT)\n"
+            "        except Exception:\n"
+            "            pass\n"
             "    print('__ORCH_JSON__:' + json.dumps({'ok': False, 'error': str(_exc), 'traceback': tb[-1800:]}))\n"
         )
         try:
@@ -511,107 +539,124 @@ class AutonomousBlenderHarness:
         last_error = ""
         last_code = ""
         current_prompt = agent_prompt
-
-        for attempt in range(1, max_code_retries + 1):
-            # Always use a fresh isolated session (`session_id=None`) on retries so previous bloated output isn't replayed in KV cache!
-            resp = self._invoke_agent(
-                self.model_id,
-                current_prompt,
-                files=attach_files if attempt == 1 else None,
-                session_id=None,
-                timeout_sec=self.stage_timeout_sec,
-                title=f"Blender Specialist ({stage_label} a{attempt})",
-            )
-            if resp.get("session_id"):
-                sess_id = resp["session_id"]
-                producer_sessions.add(sess_id)
-            telemetry.append(
-                {
-                    "stage": f"{stage_label}_attempt_{attempt}",
-                    "session_id": sess_id,
-                    "returncode": resp.get("returncode"),
-                    "duration_sec": resp.get("duration_sec"),
-                    "tokens": resp.get("tokens") or {},
-                    "compactions": resp.get("compactions", 0),
-                    "timed_out": resp.get("timed_out", False),
-                }
-            )
-            q_info = resp.get("quota_blocked") or detect_quota_error(resp.get("errors"))
-            if q_info:
-                raise QuotaBlockedError(q_info)
-            if int(resp.get("returncode", 1)) != 0:
-                last_error = f"Agent CLI error rc={resp.get('returncode')}: {resp.get('errors')}"
-                current_prompt = (
-                    f"PREVIOUS ATTEMPT FAILED ({last_error[:450]}). "
-                    "Do NOT call any tools. Return ONLY ONE complete executable ```python ... ``` script now.\n\n"
-                    + agent_prompt
-                )
-                continue
-
-            code = _extract_python_block(str(resp.get("text") or ""))
-            if not code:
-                last_error = "Agent response did not include a ```python ... ``` code block."
-                current_prompt = (
-                    "PREVIOUS RESPONSE HAD NO ```python ... ``` BLOCK. "
-                    "Do NOT call any tools or explain. Output ONLY ONE fenced ```python ... ``` script (<180 lines) using `bt`, `bmo`, and `bpy`.\n\n"
-                    + agent_prompt
-                )
-                continue
-
+        pre_step_ckpt = run_dir / "checkpoints" / f"_pre_{stage_label}.blend"
+        if fallback_checkpoint is not None or stage_label != "stage_02_blockout":
             try:
-                ast.parse(code)
-            except SyntaxError as syn_err:
-                last_error = f"Python SyntaxError at line {syn_err.lineno}: {syn_err.msg} ({syn_err.text!r})"
-                current_prompt = (
-                    f"PREVIOUS RESPONSE HAD PYTHON SYNTAX ERROR ({last_error[:350]}). "
-                    "NEVER split into Part 1 / Part 2 prose or leave incomplete syntax! "
-                    "Keep your script concise (<180 lines) using `bmo.*` and `bt.make_pbr_material(...)` and return ONE complete, syntactically valid ```python ... ``` script.\n\n"
-                    + agent_prompt
+                self._save_checkpoint(adapter, scene_name, pre_step_ckpt, f"pre_{stage_label}", user_prompt)
+            except Exception:
+                pass
+        effective_fallback = (
+            pre_step_ckpt
+            if (pre_step_ckpt.is_file() and pre_step_ckpt.stat().st_size > 100_000)
+            else fallback_checkpoint
+        )
+
+        try:
+            for attempt in range(1, max_code_retries + 1):
+                # Always use a fresh isolated session (`session_id=None`) on retries so previous bloated output isn't replayed in KV cache!
+                resp = self._invoke_agent(
+                    self.model_id,
+                    current_prompt,
+                    files=attach_files if attempt == 1 else None,
+                    session_id=None,
+                    timeout_sec=self.stage_timeout_sec,
+                    title=f"Blender Specialist ({stage_label} a{attempt})",
                 )
-                continue
+                if resp.get("session_id"):
+                    sess_id = resp["session_id"]
+                    producer_sessions.add(sess_id)
+                telemetry.append(
+                    {
+                        "stage": f"{stage_label}_attempt_{attempt}",
+                        "session_id": sess_id,
+                        "returncode": resp.get("returncode"),
+                        "duration_sec": resp.get("duration_sec"),
+                        "tokens": resp.get("tokens") or {},
+                        "compactions": resp.get("compactions", 0),
+                        "timed_out": resp.get("timed_out", False),
+                    }
+                )
+                q_info = resp.get("quota_blocked") or detect_quota_error(resp.get("errors"))
+                if q_info:
+                    raise QuotaBlockedError(q_info)
+                if int(resp.get("returncode", 1)) != 0:
+                    last_error = f"Agent CLI error rc={resp.get('returncode')}: {resp.get('errors')}"
+                    current_prompt = (
+                        f"PREVIOUS ATTEMPT FAILED ({last_error[:450]}). "
+                        "Do NOT call any tools. Return ONLY ONE complete executable ```python ... ``` script now.\n\n"
+                        + agent_prompt
+                    )
+                    continue
 
-            last_code = code
-            script_file = scripts_dir / f"{stage_label}_attempt_{attempt}.py"
-            script_file.write_text(code + "\n", encoding="utf-8")
+                code = _extract_python_block(str(resp.get("text") or ""))
+                if not code:
+                    last_error = "Agent response did not include a ```python ... ``` code block."
+                    current_prompt = (
+                        "PREVIOUS RESPONSE HAD NO ```python ... ``` BLOCK. "
+                        "Do NOT call any tools or explain. Output ONLY ONE fenced ```python ... ``` script (<180 lines) using `bt`, `bmo`, and `bpy`.\n\n"
+                        + agent_prompt
+                    )
+                    continue
 
-            exec_res = self._exec_blender_wrapped(
-                adapter,
-                scene_name,
-                run_dir,
-                code,
-                stage_label=f"{stage_label}_exec_{attempt}",
-                user_prompt=user_prompt,
-                fallback_checkpoint=fallback_checkpoint,
-                base_mesh_manifest=base_mesh_manifest,
-            )
-            if exec_res.get("ok"):
-                return {
-                    "ok": True,
-                    "session_id": sess_id,
-                    "attempt": attempt,
-                    "script_path": str(script_file),
-                    "audit": exec_res["audit"],
-                }
+                try:
+                    ast.parse(code)
+                except SyntaxError as syn_err:
+                    last_error = f"Python SyntaxError at line {syn_err.lineno}: {syn_err.msg} ({syn_err.text!r})"
+                    current_prompt = (
+                        f"PREVIOUS RESPONSE HAD PYTHON SYNTAX ERROR ({last_error[:350]}). "
+                        "NEVER split into Part 1 / Part 2 prose or leave incomplete syntax! "
+                        "Keep your script concise (<180 lines) using `bmo.*` and `bt.make_pbr_material(...)` and return ONE complete, syntactically valid ```python ... ``` script.\n\n"
+                        + agent_prompt
+                    )
+                    continue
 
-            last_error = str(exec_res.get("traceback") or exec_res.get("error") or "Unknown Blender error")
-            code_ctx = (
-                last_code
-                if len(last_code) <= 24000
-                else (last_code[:14000] + "\n# ...(middle trimmed)...\n" + last_code[-8000:])
-            )
-            current_prompt = (
-                f"Previous script raised an error:\n```\n{last_error[-1200:]}\n```\n"
-                f"Script to fix:\n```python\n{code_ctx}\n```\n"
-                "Fix the bug cleanly (use `bt.make_pbr_material(...)` instead of custom shader helpers, never split into Part 1/2, keep script concise <180 lines, never rescale/move SM_BaseBody or assign multi-material to eyes, never link SM_Studio_* to col_export) and return ONLY the COMPLETE corrected ```python ... ``` script."
-            )
+                last_code = code
+                script_file = scripts_dir / f"{stage_label}_attempt_{attempt}.py"
+                script_file.write_text(code + "\n", encoding="utf-8")
 
-        return {
-            "ok": False,
-            "session_id": sess_id,
-            "error": last_error,
-            "last_code_len": len(last_code),
-            "audit": None,
-        }
+                exec_res = self._exec_blender_wrapped(
+                    adapter,
+                    scene_name,
+                    run_dir,
+                    code,
+                    stage_label=f"{stage_label}_exec_{attempt}",
+                    user_prompt=user_prompt,
+                    fallback_checkpoint=effective_fallback,
+                    base_mesh_manifest=base_mesh_manifest,
+                )
+                if exec_res.get("ok"):
+                    return {
+                        "ok": True,
+                        "session_id": sess_id,
+                        "attempt": attempt,
+                        "script_path": str(script_file),
+                        "audit": exec_res["audit"],
+                    }
+
+                last_error = str(exec_res.get("traceback") or exec_res.get("error") or "Unknown Blender error")
+                code_ctx = (
+                    last_code
+                    if len(last_code) <= 24000
+                    else (last_code[:14000] + "\n# ...(middle trimmed)...\n" + last_code[-8000:])
+                )
+                current_prompt = (
+                    f"Previous script raised an error:\n```\n{last_error[-1200:]}\n```\n"
+                    f"Script to fix:\n```python\n{code_ctx}\n```\n"
+                    "Fix the bug cleanly (use `bt.make_pbr_material(...)` instead of custom shader helpers, never split into Part 1/2, keep script concise <180 lines, never rescale/move SM_BaseBody or assign multi-material to eyes, never link SM_Studio_* to col_export) and return ONLY the COMPLETE corrected ```python ... ``` script."
+                )
+
+            return {
+                "ok": False,
+                "session_id": sess_id,
+                "error": last_error,
+                "last_code_len": len(last_code),
+                "audit": None,
+            }
+        finally:
+            try:
+                pre_step_ckpt.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def run_production(
         self,
@@ -724,7 +769,7 @@ class AutonomousBlenderHarness:
                     '  "target_dimensions_m": {"height": 1.65, "width": 0.65, "depth": 0.35},',
                     '  "requires_rigging": true,',
                     '  "requires_animation": true,',
-                    '  "semantic_stylization_controls": {"head_scale": 0.08, "eye_size": 0.18, "eye_separation": 0.05, "jaw_width": -0.15, "chin_length": -0.05, "ear_pointedness": 0.85, "waist_taper": -0.18, "shoulder_width": -0.08},',
+                    '  "semantic_stylization_controls": {"head_scale": -0.08, "eye_size": 0.18, "eye_separation": 0.05, "jaw_width": -0.15, "chin_length": -0.05, "ear_pointedness": 0.85, "waist_taper": -0.18, "shoulder_width": -0.08},',
                     '  "color_palette": [{"material_name": "MAT_...", "hex": "#...", "roughness": 0.5, "metallic": 0.0, "emission_strength": 0.0, "surface_type": "skin|cloth|leather|gold|hair|emissive"}],',
                     '  "painted_textures_needed": [{"texture_name": "TEX_...", "target_objects": ["SM_..."], "description": "..."}],',
                     '  "component_passes": [',
@@ -1040,7 +1085,7 @@ class AutonomousBlenderHarness:
                                 "1) Royal-blue tunic bodice `bmo.extract_garment_from_body(body_obj, 'SM_Tunic_Bodice', z_min=waist_z-0.02, z_max=neck_z-0.015, x_abs_max=0.18, collection=col_export)` + cream undershirt collar `SM_Undershirt_Collar` + quilted cream front plastron panel `bmo.create_chest_plastron_panel(body_obj, 'SM_Undershirt_Front', z_min=waist_z-0.005, z_max=neck_z-0.055, half_width=0.068, surface_offset_m=0.017, collection=col_export)` (clean surface projection with zero Z-fighting and zero per-polygon material splits!); "
                                 "2) Sleek pleated A-line tunic peplum skirt `bmo.create_flared_skirt_from_waist(body_obj, 'SM_Tunic_Skirt', hem_z=0.70, flare_radius_add=0.060, collection=col_export)`; "
                                 "3) Gold neckline trim `bmo.extract_hem_trim_from_garment(bodice, 'SM_Trim_Collar', edge='top', band_height_m=0.014, thickness_m=0.0025, collection=col_export)` (from SM_Tunic_Bodice top edge, NEVER SM_Undershirt_Collar under the chin!) + skirt hem trim `SM_Trim_Hem`; "
-                                "4) Posed L/R arm sleeves & fingerless gloves via `bmo.extract_sleeve_from_arm(body_obj, ..., side='L'/'R')` (`0.02..0.45` blue, `0.42..0.80` cream, `0.78..0.90` dark fingerless gloves covering palm/knuckles ONLY — NEVER `0.98` capping fingertips!); "
+                                "4) Posed L/R arm sleeves via `bmo.extract_sleeve_from_arm(body_obj, ..., side='L'/'R')` (`0.02..0.45` blue, `0.42..0.84` cream stopping cleanly at the wrist — NEVER extend sleeve tubes past `0.86` and do NOT create hollow `SM_Glove_*` tubes over the palms/fingers so the articulated 5-finger hands stay completely clean!); "
                                 "5) Fitted leather waist belt + buckle `bmo.create_fitted_waist_belt(body_obj, 'SM_Belt', add_buckle=True, collection=col_export)` + beveled hip pouch (`bt.create_beveled_panel`) + charcoal leggings `SM_Leggings_L`/`R` (`extract_garment_from_body(..., z_min=ankle_z+0.02, z_max=hip_z+0.075, side='L'/'R')`) + `bmo.create_fitted_boots(body_obj, 'SM_Boots', shaft_top_z=0.30, collection=col_export)`."
                             ),
                         },
@@ -1131,9 +1176,11 @@ class AutonomousBlenderHarness:
                 _save_good_ckpt(checkpoints_dir / "03_detailed_modeling_p0.blend", "stage_03_save")
 
                 # Independent Geometry Clay Review & up to 2 High-Impact Structural Refinement Passes
+                best_geo_tier = -1
                 best_geo_score = -1.0
                 best_geo_mesh_count = 0
                 best_geo_blend = checkpoints_dir / "03_detailed_modeling_best.blend"
+                last_geo_tier = -1
                 last_geo_score = -1.0
                 last_geo_mesh_count = int(audit_latest.get("mesh_count", 0))
                 max_geo_fixes = min(2, self.max_stage_corrections)
@@ -1154,7 +1201,8 @@ class AutonomousBlenderHarness:
                     audit_latest = geo_r["audit"]
                     anomalies_latest = geo_r.get("anomalies") or {}
                     cur_renders = geo_r["render"]["renders"]
-                    cur_meshes = int(audit_latest.get("mesh_count", 0))
+                    cur_tier, cur_meshes = _scene_completeness_tier(audit_latest)
+                    last_geo_tier = cur_tier
                     last_geo_mesh_count = cur_meshes
                     rev = self.stage_reviewer.review_stage(
                         stage_name="detailed_modeling",
@@ -1170,11 +1218,16 @@ class AutonomousBlenderHarness:
                     stage_reviews["detailed_modeling"].append(rev)
                     (reviews_dir / f"stage_03_geometry_p{fix_idx}.json").write_text(json.dumps(rev, indent=2) + "\n", encoding="utf-8")
                     last_geo_score = float(rev.get("score", 0.0))
-                    # Completeness-aware checkpoint selection: never let a bare mannequin (meshes < 10) beat a clothed/haired asset (>= 10)
-                    is_better_geo = (cur_meshes >= 10 and best_geo_mesh_count < 10) or (
-                        ((cur_meshes >= 10) == (best_geo_mesh_count >= 10)) and last_geo_score >= best_geo_score
+                    # Completeness-aware checkpoint selection: never let a stripped/bald scene overwrite a fuller build
+                    is_better_geo = (cur_tier > best_geo_tier) or (
+                        cur_tier == best_geo_tier
+                        and (
+                            last_geo_score > best_geo_score
+                            or (last_geo_score == best_geo_score and cur_meshes >= best_geo_mesh_count)
+                        )
                     )
                     if is_better_geo:
+                        best_geo_tier = cur_tier
                         best_geo_score = last_geo_score
                         best_geo_mesh_count = cur_meshes
                         _save_good_ckpt(best_geo_blend, f"stage_03_save_best_{fix_idx}")
@@ -1203,7 +1256,7 @@ class AutonomousBlenderHarness:
                             "Return ONLY a single ```python ... ``` script.",
                         ]
                     )
-                    self._run_code_agent_with_retry(
+                    gfix_exec = self._run_code_agent_with_retry(
                         adapter=adapter,
                         scene_name=scene_name,
                         run_dir=run_dir,
@@ -1217,13 +1270,13 @@ class AutonomousBlenderHarness:
                         fallback_checkpoint=last_good_checkpoint,
                         base_mesh_manifest=base_mesh_manifest,
                     )
+                    if not gfix_exec.get("ok"):
+                        break
                     _save_good_ckpt(checkpoints_dir / f"03_detailed_modeling_fix{fix_idx + 1}.blend", f"stage_03_save_fix_{fix_idx + 1}")
 
-                can_restore_best = (
-                    best_geo_blend.is_file()
-                    and best_geo_mesh_count >= max(1, last_geo_mesh_count - 2)
-                    and (best_geo_mesh_count >= 10 or last_geo_mesh_count < 10)
-                    and last_geo_score < best_geo_score
+                can_restore_best = best_geo_blend.is_file() and (
+                    best_geo_tier > last_geo_tier
+                    or (best_geo_tier == last_geo_tier and last_geo_score < best_geo_score)
                 )
                 if can_restore_best:
                     restored_geo = self._run_blender_util(
@@ -1303,8 +1356,11 @@ class AutonomousBlenderHarness:
                 _save_good_ckpt(checkpoints_dir / "04_lookdev_p0.blend", "stage_04_save")
 
                 # Independent Full-Color Appearance & Identity Review + Bounded Refinement (max 2 high-impact lookdev+form polish passes)
+                best_look_tier = -1
                 best_look_score = -1.0
+                best_look_mesh_count = 0
                 best_look_blend = checkpoints_dir / "04_lookdev_best.blend"
+                last_look_tier = -1
                 last_look_score = -1.0
                 max_look_fixes = min(2, self.max_stage_corrections)
 
@@ -1325,6 +1381,8 @@ class AutonomousBlenderHarness:
                     audit_latest = look_r["audit"]
                     anomalies_latest = look_r.get("anomalies") or {}
                     cur_renders = look_r["render"]["renders"]
+                    cur_look_tier, cur_look_meshes = _scene_completeness_tier(audit_latest)
+                    last_look_tier = cur_look_tier
                     rev = self.stage_reviewer.review_stage(
                         stage_name="materials_and_textures",
                         renders=cur_renders,
@@ -1339,8 +1397,17 @@ class AutonomousBlenderHarness:
                     stage_reviews["materials_and_textures"].append(rev)
                     (reviews_dir / f"stage_04_lookdev_p{fix_idx}.json").write_text(json.dumps(rev, indent=2) + "\n", encoding="utf-8")
                     last_look_score = float(rev.get("score", 0.0))
-                    if last_look_score >= best_look_score:
+                    is_better_look = (cur_look_tier > best_look_tier) or (
+                        cur_look_tier == best_look_tier
+                        and (
+                            last_look_score > best_look_score
+                            or (last_look_score == best_look_score and cur_look_meshes >= best_look_mesh_count)
+                        )
+                    )
+                    if is_better_look:
+                        best_look_tier = cur_look_tier
                         best_look_score = last_look_score
+                        best_look_mesh_count = cur_look_meshes
                         _save_good_ckpt(best_look_blend, f"stage_04_save_best_{fix_idx}")
                     prior_look_renders = cur_renders
                     if rev.get("passed") or fix_idx >= max_look_fixes:
@@ -1365,7 +1432,7 @@ class AutonomousBlenderHarness:
                             "Return ONLY a single ```python ... ``` script.",
                         ]
                     )
-                    self._run_code_agent_with_retry(
+                    lfix_exec = self._run_code_agent_with_retry(
                         adapter=adapter,
                         scene_name=scene_name,
                         run_dir=run_dir,
@@ -1379,11 +1446,17 @@ class AutonomousBlenderHarness:
                         fallback_checkpoint=last_good_checkpoint,
                         base_mesh_manifest=base_mesh_manifest,
                     )
+                    if not lfix_exec.get("ok"):
+                        break
                     _save_good_ckpt(checkpoints_dir / f"04_lookdev_fix{fix_idx + 1}.blend", f"stage_04_save_fix_{fix_idx + 1}")
 
-                # Retain best lookdev checkpoint if final edit regressed
-                if best_look_blend.is_file() and last_look_score < best_look_score:
-                    self._run_blender_util(
+                # Retain best lookdev checkpoint if final edit regressed or dropped components
+                can_restore_best_look = best_look_blend.is_file() and (
+                    best_look_tier > last_look_tier
+                    or (best_look_tier == last_look_tier and last_look_score < best_look_score)
+                )
+                if can_restore_best_look:
+                    restored_look = self._run_blender_util(
                         adapter,
                         f"bpy.ops.wm.open_mainfile(filepath={json.dumps(str(best_look_blend))})\n"
                         f"s = bpy.data.scenes[{json.dumps(scene_name)}]\n"
@@ -1391,6 +1464,8 @@ class AutonomousBlenderHarness:
                         stage_label="stage_04_restore_best",
                         user_prompt=prompt,
                     )
+                    if restored_look.get("audit"):
+                        audit_latest = restored_look["audit"]
                     last_good_checkpoint = best_look_blend
             else:
                 # Resuming directly at Stage 5/6: pick up prior lookdev renders if present on disk
