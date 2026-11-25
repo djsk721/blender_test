@@ -399,7 +399,9 @@ class AutonomousBlenderHarness:
             f"    sys.path.insert(0, {json.dumps(str(self.project_root))})\n"
             "import bpy\n"
             "from blender_orchestration import blender_toolkit as bt\n"
+            "from blender_orchestration import base_mesh_ops as bmo\n"
             "bt = importlib.reload(bt)\n"
+            "bmo = importlib.reload(bmo)\n"
             + code_body
         )
         return adapter.execute_blender_json(full, user_prompt=user_prompt, stage=stage_label)["parsed"]
