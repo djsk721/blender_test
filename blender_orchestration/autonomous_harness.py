@@ -9,6 +9,7 @@ fresh-scene GLB export/reimport, and blind 100-point final visual evaluation.
 
 from __future__ import annotations
 
+import ast
 import datetime
 import hashlib
 import json
@@ -122,7 +123,7 @@ Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground
    - Builds fitted scalp cap + bold ear-to-ear wrapped crown braid + layered tapered flowing locks + cheek locks & wispy bangs above eyebrows (NEVER add flat hair-card planes like `SM_Hair_ManeCards`!).
 11. `bmo.pose_arm_for_prop_hold(body_obj, side="L", shoulder_pitch_deg=32.0, shoulder_inward_deg=18.0, elbow_bend_deg=72.0)` -> bends shoulder+elbow forward BEFORE `extract_sleeve_from_arm`.
 12. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)` -> keep ONLY ONE beveled upright `SM_Prop_RunicSlate` facing `-Y`.
-13. STUDIO RULE: NEVER create custom studio backdrops, floors, lights, collections (`COL_STUDIO_*`), or cameras — `COL_Studio` provides all studio lighting and cameras automatically!
+13. SCRIPTING & STUDIO RULES: Keep scripts CONCISE (<180 lines) using `bmo.*` and `bt.make_pbr_material(...)` directly — NEVER write a custom `make_mat()` function or raw BSDF socket loop, NEVER split a script into Part 1 / Part 2, NEVER assign per-polygon multi-materials onto `SM_BaseBody_Eye_L`/`R`, NEVER paint clothing/hair materials onto `SM_BaseBody` torso/legs, and NEVER create custom studio backdrops, floors, lights, collections (`COL_STUDIO_*`), or cameras!
 14. Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
 """
 
@@ -549,7 +550,19 @@ class AutonomousBlenderHarness:
                 last_error = "Agent response did not include a ```python ... ``` code block."
                 current_prompt = (
                     "PREVIOUS RESPONSE HAD NO ```python ... ``` BLOCK. "
-                    "Do NOT call any tools or explain. Output ONLY ONE fenced ```python ... ``` script using `bt`, `bmo`, and `bpy`.\n\n"
+                    "Do NOT call any tools or explain. Output ONLY ONE fenced ```python ... ``` script (<180 lines) using `bt`, `bmo`, and `bpy`.\n\n"
+                    + agent_prompt
+                )
+                continue
+
+            try:
+                ast.parse(code)
+            except SyntaxError as syn_err:
+                last_error = f"Python SyntaxError at line {syn_err.lineno}: {syn_err.msg} ({syn_err.text!r})"
+                current_prompt = (
+                    f"PREVIOUS RESPONSE HAD PYTHON SYNTAX ERROR ({last_error[:350]}). "
+                    "NEVER split into Part 1 / Part 2 prose or leave incomplete syntax! "
+                    "Keep your script concise (<180 lines) using `bmo.*` and `bt.make_pbr_material(...)` and return ONE complete, syntactically valid ```python ... ``` script.\n\n"
                     + agent_prompt
                 )
                 continue
@@ -578,11 +591,15 @@ class AutonomousBlenderHarness:
                 }
 
             last_error = str(exec_res.get("traceback") or exec_res.get("error") or "Unknown Blender error")
-            code_ctx = last_code if len(last_code) <= 10000 else (last_code[:6500] + "\n# ...(trimmed)...\n" + last_code[-3200:])
+            code_ctx = (
+                last_code
+                if len(last_code) <= 24000
+                else (last_code[:14000] + "\n# ...(middle trimmed)...\n" + last_code[-8000:])
+            )
             current_prompt = (
                 f"Previous script raised an error:\n```\n{last_error[-1200:]}\n```\n"
                 f"Script to fix:\n```python\n{code_ctx}\n```\n"
-                "Fix the bug cleanly (never rescale/move SM_BaseBody or drop SM_BaseBody_Eye_L/R, keep all meshes within bounds, never link SM_Studio_* to col_export) and return ONLY the COMPLETE corrected ```python ... ``` script."
+                "Fix the bug cleanly (use `bt.make_pbr_material(...)` instead of custom shader helpers, never split into Part 1/2, keep script concise <180 lines, never rescale/move SM_BaseBody or assign multi-material to eyes, never link SM_Studio_* to col_export) and return ONLY the COMPLETE corrected ```python ... ``` script."
             )
 
         return {
@@ -997,7 +1014,47 @@ class AutonomousBlenderHarness:
             if start_stage <= 3:
                 if not landmarks_summary and (handoffs_dir / "02_anatomical_landmarks.json").is_file():
                     landmarks_summary = (handoffs_dir / "02_anatomical_landmarks.json").read_text(encoding="utf-8")[:1600]
-                passes = list(design_spec.get("component_passes") or [])[:2]
+                if is_base_mesh_mode:
+                    passes = [
+                        {
+                            "pass_id": "pass_1_stylize_face_pose",
+                            "title": "Semantic Stylization, Face Features & Prop-Hold Arm Pose",
+                            "skills": [primary_disc_skill, "sculpting"],
+                            "focus": (
+                                "PASS 1 SCOPE ONLY (keep script <120 lines): "
+                                "Call `bmo.apply_semantic_stylization(body_obj, {...})` for head/jaw/chin/ears/waist proportions, "
+                                "`bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)`, "
+                                "and `bmo.pose_arm_for_prop_hold(body_obj, side='L', shoulder_pitch_deg=32.0, shoulder_inward_deg=18.0, elbow_bend_deg=72.0)`. "
+                                "Do NOT create garments, boots, hair, or props in Pass 1."
+                            ),
+                        },
+                        {
+                            "pass_id": "pass_2_garments_boots",
+                            "title": "Body-Conforming Tunic, A-Line Skirt, Sleeves, Belt, Leggings & Cuffed Boots",
+                            "skills": [primary_disc_skill, "sculpting"],
+                            "focus": (
+                                "PASS 2 SCOPE ONLY (keep script <180 lines; NEVER write a custom make_mat() helper — use `bt.make_pbr_material` directly!): "
+                                "1) Royal-blue tunic bodice `bmo.extract_garment_from_body(body_obj, 'SM_Tunic_Bodice', z_min=waist_z-0.02, z_max=neck_z-0.015, x_abs_max=0.18, collection=col_export)` + cream undershirt collar; "
+                                "2) Continuous pleated A-line skirt `bmo.create_flared_skirt_from_waist(body_obj, 'SM_Tunic_Skirt', hem_z=0.64, flare_radius_add=0.095, collection=col_export)`; "
+                                "3) Gold collar & hem trim `bmo.extract_hem_trim_from_garment(...)`; "
+                                "4) Posed L/R arm sleeves & gloves via `bmo.extract_sleeve_from_arm(body_obj, ..., side='L'/'R')` (`0.02..0.45` blue, `0.42..0.86` cream, `0.84..0.98` dark fingerless gloves); "
+                                "5) Leather belt + gold buckle + left-hip pouch + charcoal leggings + `bmo.create_fitted_boots(body_obj, 'SM_Boots', shaft_top_z=0.30, collection=col_export)`."
+                            ),
+                        },
+                        {
+                            "pass_id": "pass_3_hair_and_prop",
+                            "title": "Layered Curve Hair, Crown Braid, Wispy Bangs & Held Runic Slate Prop",
+                            "skills": ["hair-groom", "sculpting"],
+                            "focus": (
+                                "PASS 3 SCOPE ONLY (keep script <120 lines; NEVER build planar SM_Hair_ManeCards or write custom make_mat()): "
+                                "1) Call `bmo.build_layered_curve_hair('SM_Hair', body_obj, auto_crown_braid=True, auto_flowing_back={'length_m': 0.58, 'lock_count': 11}, auto_side_locks={'length_m': 0.30}, collection=col_export)` and assign golden blonde PBR (`bt.make_pbr_material`); "
+                                "2) Build ONLY ONE beveled upright hero prop `SM_Prop_RunicSlate` facing `-Y` using `bt.create_beveled_panel(...)` + `bt.smart_uv_unwrap(...)`; "
+                                "3) Call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)` so fingers wrap its edge cleanly."
+                            ),
+                        },
+                    ]
+                else:
+                    passes = list(design_spec.get("component_passes") or [])[:2]
                 for p_idx, pspec in enumerate(passes, start=1):
                     pid = str(pspec.get("pass_id") or f"pass_{p_idx}")
                     pass_ckpt = checkpoints_dir / f"03_pass_{p_idx}_{pid}.blend"
@@ -1016,17 +1073,13 @@ class AutonomousBlenderHarness:
                         p_prompt = "\n".join(
                             [
                                 f"You are the Body-Aware Garment, Curve-Hair & Prop Specialist (Stage 3 — {pid}: {pspec.get('title', '')}).",
-                                "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
-                                "RULES FOR BASE MESH MODE:",
-                                "- Preserve `SM_BaseBody` and `SM_BaseBody_Eye_L`/`R` cleanly at their exact normalized scale/location (`1.65m` tall, facing `-Y`, `min_z=0.0`) — NEVER rescale, rotate, or move `SM_BaseBody` or delete `SM_BaseBody_Eye_L/R`, NEVER link `SM_Studio_*` objects into `col_export`, and NEVER create custom studio backdrops, floors, lights, or cameras!",
-                                "- FACE: Use `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` for seated anime eyes, surface-snapped `SM_Eyelashes` & `SM_Eyebrows`, and lip tint (NEVER create a separate `GEO_Mouth_Lips` mesh or occlude eyes with hair cards!).",
-                                "- ARMS, HANDS & HELD PROP: Call `bmo.pose_arm_for_prop_hold(body_obj, side='L')` BEFORE extracting sleeves, then use `bmo.extract_sleeve_from_arm(body_obj, ...)` per arm (`start_frac=0.02..0.45` blue upper sleeve, `0.42..0.86` cream forearm sleeve, `0.84..0.98` dark fingerless glove) so sleeves follow posed arms cleanly (NEVER wrap hands in blue tunic!). Build ONLY ONE beveled upright `SM_Prop_RunicSlate` facing `-Y` and call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)`.",
-                                "- GARMENTS & SKIRT: Keep tunic bodice `x_abs_max=0.18` and `z_max <= neck_z - 0.015`, use `bmo.create_flared_skirt_from_waist(body_obj, 'SM_Tunic_Skirt', hem_z=0.64, flare_radius_add=0.095, collection=col_export)` for a single continuous A-line pleated skirt (NEVER extract below `hip_z` into leg shorts!), plus `bmo.extract_hem_trim_from_garment(...)` for collar and skirt gold trim (NEVER floating torus rings!).",
-                                "- BOOTS: ALWAYS use `bmo.create_fitted_boots(body_obj, 'SM_Boots', shaft_top_z=0.30, collection=col_export)` for smooth grounded boots & cuffs.",
-                                "- HAIR: Use `bmo.build_layered_curve_hair('SM_Hair', body_obj, auto_crown_braid=True, auto_flowing_back={'length_m': 0.58, 'lock_count': 11}, auto_side_locks={'length_m': 0.30}, collection=col_export)` for crown braid + tapered flowing locks + wispy bangs above eyebrows (NEVER build planar `SM_Hair_ManeCards`!).",
+                                "Do NOT call any tools. Return ONLY ONE complete executable ```python ... ``` script (<180 lines, NEVER split into Part 1/2!).",
+                                str(pspec.get("focus") or ""),
+                                "MANDATORY RULES FOR BASE MESH MODE:",
+                                "- Preserve `SM_BaseBody` and `SM_BaseBody_Eye_L`/`R` cleanly at their exact normalized scale/location (`1.65m` tall, facing `-Y`, `min_z=0.0`) — NEVER rescale/rotate/move `SM_BaseBody`, NEVER assign multi-materials to `SM_BaseBody_Eye_L/R`, NEVER paint clothing/hair onto `SM_BaseBody`, NEVER link `SM_Studio_*` into `col_export`, and NEVER create custom studio backdrops/floors/lights/cameras!",
+                                "- ALWAYS call `bt.make_pbr_material(name, '#RRGGBB', ...)` directly for materials — NEVER write a custom `make_mat()` function!",
                                 f"Verified Landmarks:\n{landmarks_summary}",
-                                f"Pass Spec:\n{json.dumps(pspec, indent=2)[:1500]}",
-                                f"Design Spec:\n{spec_compact[:2200]}",
+                                f"Design Spec:\n{spec_compact[:1800]}",
                                 f"Scene Inventory:\n{_format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800]}",
                                 "Loaded Skills:\n" + p_skill_ctx,
                                 api_cheatsheet,
@@ -1076,8 +1129,10 @@ class AutonomousBlenderHarness:
 
                 # Independent Geometry Clay Review & up to 2 High-Impact Structural Refinement Passes
                 best_geo_score = -1.0
+                best_geo_mesh_count = 0
                 best_geo_blend = checkpoints_dir / "03_detailed_modeling_best.blend"
                 last_geo_score = -1.0
+                last_geo_mesh_count = int(audit_latest.get("mesh_count", 0))
                 max_geo_fixes = min(2, self.max_stage_corrections)
                 for fix_idx in range(0, max_geo_fixes + 1):
                     geo_r = self._render_views(
@@ -1096,6 +1151,8 @@ class AutonomousBlenderHarness:
                     audit_latest = geo_r["audit"]
                     anomalies_latest = geo_r.get("anomalies") or {}
                     cur_renders = geo_r["render"]["renders"]
+                    cur_meshes = int(audit_latest.get("mesh_count", 0))
+                    last_geo_mesh_count = cur_meshes
                     rev = self.stage_reviewer.review_stage(
                         stage_name="detailed_modeling",
                         renders=cur_renders,
@@ -1110,8 +1167,13 @@ class AutonomousBlenderHarness:
                     stage_reviews["detailed_modeling"].append(rev)
                     (reviews_dir / f"stage_03_geometry_p{fix_idx}.json").write_text(json.dumps(rev, indent=2) + "\n", encoding="utf-8")
                     last_geo_score = float(rev.get("score", 0.0))
-                    if last_geo_score >= best_geo_score:
+                    # Completeness-aware checkpoint selection: never let a bare mannequin (meshes < 10) beat a clothed/haired asset (>= 10)
+                    is_better_geo = (cur_meshes >= 10 and best_geo_mesh_count < 10) or (
+                        ((cur_meshes >= 10) == (best_geo_mesh_count >= 10)) and last_geo_score >= best_geo_score
+                    )
+                    if is_better_geo:
                         best_geo_score = last_geo_score
+                        best_geo_mesh_count = cur_meshes
                         _save_good_ckpt(best_geo_blend, f"stage_03_save_best_{fix_idx}")
                     prior_geo_renders = cur_renders
                     if rev.get("passed") or fix_idx >= max_geo_fixes:
@@ -1153,7 +1215,13 @@ class AutonomousBlenderHarness:
                     )
                     _save_good_ckpt(checkpoints_dir / f"03_detailed_modeling_fix{fix_idx + 1}.blend", f"stage_03_save_fix_{fix_idx + 1}")
 
-                if best_geo_blend.is_file() and last_geo_score < best_geo_score:
+                can_restore_best = (
+                    best_geo_blend.is_file()
+                    and best_geo_mesh_count >= max(1, last_geo_mesh_count - 2)
+                    and (best_geo_mesh_count >= 10 or last_geo_mesh_count < 10)
+                    and last_geo_score < best_geo_score
+                )
+                if can_restore_best:
                     restored_geo = self._run_blender_util(
                         adapter,
                         f"bpy.ops.wm.open_mainfile(filepath={json.dumps(str(best_geo_blend))})\n"
@@ -1201,11 +1269,11 @@ class AutonomousBlenderHarness:
                 s4_prompt = "\n".join(
                     [
                         "You are the UV, Texture, Stylized PBR Material & Lookdev Specialist Agent (Stage 4).",
-                        "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
+                        "Do NOT call any tools. Return ONLY ONE complete executable ```python ... ``` script (<180 lines, NEVER write a custom make_mat() or split into Part 1/2!).",
                         "CRITICAL LOOKDEV STANDARDS:",
-                        "- Preserve existing `UVMap` and positions on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (NEVER shrink, move, or drop them, NEVER link `SM_Studio_*` to `col_export`, and NEVER create custom studio lights, backdrops, floors, or cameras!). Unwrap any new `SM_*` meshes lacking UVs (`bt.project_planar_uv` on planar front emblems computed from exact vertex bounds).",
-                        "- Call `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` so eyes/brows/lashes stay seated and bright without pale pastel washout (never paint cyan streaks onto hair!).",
-                        "- Build rich deep multi-layer PBR shaders via `bt.make_pbr_material(..., ao_darken=0.32, ao_distance=0.14)` (`#1A5BC4` royal blue tunic, `#E3A93C` golden blonde hair roughness=0.44, `#EFE6D2` cream undershirt, `#2A2A32` charcoal leggings, `#5A3820` brown leather boots/belt, `#D8A62E` metallic gold trim metallic=0.9, dark gunmetal slate with `1024x1024` `bt.create_painted_image_texture` `#30E8FF` cyan rune/lens `emission_texture` & `emission_strength=6.5`, packed). Assign a `MAT_*` material to EVERY mesh in `col_export` — ZERO untextured parts!",
+                        "- Preserve existing `UVMap` and positions on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (NEVER shrink/move/drop them, NEVER assign per-polygon multi-materials onto `SM_BaseBody_Eye_L/R`, NEVER paint clothing/hair materials onto `SM_BaseBody` torso/legs, NEVER link `SM_Studio_*` to `col_export`, and NEVER create custom studio lights, backdrops, floors, or cameras!). Unwrap any new `SM_*` meshes lacking UVs (`bt.project_planar_uv` on planar front emblems computed from exact vertex bounds).",
+                        "- Call `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` so eyes/brows/lashes stay bright without checkerboard artifacts.",
+                        "- Build rich deep multi-layer PBR shaders via `bt.make_pbr_material(..., ao_darken=0.32, ao_distance=0.14)` (`#F0C4A0` matte stylized skin with `roughness=0.58, specular=0.35, subsurface=0.06` — NO glossy plastic sheen!, `#1A5BC4` royal blue tunic, `#E3A93C` golden blonde hair roughness=0.44, `#EFE6D2` cream undershirt, `#2A2A32` charcoal leggings, `#5A3820` brown leather boots/belt, `#D8A62E` metallic gold trim metallic=0.9, dark gunmetal slate with `1024x1024` `bt.create_painted_image_texture` `#30E8FF` cyan rune/lens `emission_texture` & `emission_strength=6.5`, packed). Assign a `MAT_*` material to EVERY mesh in `col_export` — ZERO untextured parts!",
                         f"Design Spec Palette & Texture Plan:\n{spec_compact[:2400]}",
                         "Live Scene Inventory:\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800],
                         "Loaded Skills:\n" + s4_skill_ctx,

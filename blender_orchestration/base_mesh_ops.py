@@ -874,18 +874,18 @@ def _make_procedural_anime_eye_material(
     sclera_rgb = bt.hex_to_linear(sclera_hex)
 
     e0 = ramp.color_ramp.elements[0]
-    e0.position = 0.095
+    e0.position = 0.100
     e0.color = (*pupil_rgb, 1.0)
     e1 = ramp.color_ramp.elements[1]
-    e1.position = 0.255
+    e1.position = 0.282
     e1.color = (*sclera_rgb, 1.0)
-    e_in = ramp.color_ramp.elements.new(0.115)
+    e_in = ramp.color_ramp.elements.new(0.125)
     e_in.color = (*iris_bright, 1.0)
-    e_mid = ramp.color_ramp.elements.new(0.185)
+    e_mid = ramp.color_ramp.elements.new(0.215)
     e_mid.color = (*iris_rgb, 1.0)
-    e_lim = ramp.color_ramp.elements.new(0.228)
+    e_lim = ramp.color_ramp.elements.new(0.265)
     e_lim.color = (*iris_dark, 1.0)
-    e_edge = ramp.color_ramp.elements.new(0.242)
+    e_edge = ramp.color_ramp.elements.new(0.274)
     e_edge.color = (*sclera_rgb, 1.0)
     nt.links.new(dist_iris.outputs["Value"], ramp.inputs["Fac"])
 
@@ -1092,12 +1092,12 @@ def style_face_features(
     bt.smart_uv_unwrap(lash_joined)
     bt.smart_uv_unwrap(brow_joined)
 
-    # Paint soft rose lip tint directly onto SM_BaseBody lip faces (slot 1), keeping slot 0 as skin
+    # Paint soft rose lip tint directly onto SM_BaseBody lip faces (slot 1), keeping slot 0 as matte stylized skin
     lips_c = Vector(lm["lips"])
     chin_z = float(lm["chin"][2])
-    mat_lip = bt.make_pbr_material("MAT_Lips_Stylized", lip_hex, roughness=0.42, subsurface=0.05)
+    mat_lip = bt.make_pbr_material("MAT_Lips_Stylized", lip_hex, roughness=0.44, specular=0.35, subsurface=0.05)
     if len(body_obj.data.materials) == 0:
-        body_obj.data.materials.append(bt.make_pbr_material("MAT_Skin_Base", "#F0C4A0", roughness=0.48, subsurface=0.06))
+        body_obj.data.materials.append(bt.make_pbr_material("MAT_Skin_Base", "#F0C4A0", roughness=0.58, specular=0.35, subsurface=0.06))
     lip_slot_idx = None
     for s_idx, m in enumerate(body_obj.data.materials):
         if m is not None and m.name == mat_lip.name:
@@ -1957,6 +1957,10 @@ def audit_base_mesh_integrity(
     for ename in (f"{body_name}_Eye_L", f"{body_name}_Eye_R"):
         eobj = bpy.data.objects.get(ename)
         if eobj is not None and eobj.type == "MESH":
+            if len(eobj.data.materials) > 1:
+                issues.append(
+                    f"{ename} uses {len(eobj.data.materials)} material slots (must use a single cohesive eye shader via bmo.style_face_features(), never per-polygon multi-material checkerboard splits!)."
+                )
             everts, _ = _eval_mesh_world_verts(eobj)
             if everts:
                 ez_mid = 0.5 * (min(v.z for v in everts) + max(v.z for v in everts))

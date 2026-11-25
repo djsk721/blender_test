@@ -159,6 +159,13 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "bad_card = bt.create_beveled_panel('SM_Hair_ManeCards', [(-0.06,-0.06),(0.06,-0.06),(0.06,0.06),(-0.06,0.06)], depth=0.14, location=(0.0, eyey - 0.06, eyez - 0.07), collection=col)\n"
                     "integ_eye_occ = bmo.audit_base_mesh_integrity(scene)\n"
                     "bt.remove_object_if_exists('SM_Hair_ManeCards')\n"
+                    "eye_l_obj = bpy.data.objects['SM_BaseBody_Eye_L']\n"
+                    "orig_eye_mats = list(eye_l_obj.data.materials)\n"
+                    "eye_l_obj.data.materials.append(bt.make_pbr_material('MAT_EyeDummy2', '#FFFFFF'))\n"
+                    "integ_eye_split = bmo.audit_base_mesh_integrity(scene)\n"
+                    "eye_l_obj.data.materials.clear()\n"
+                    "for em in orig_eye_mats:\n"
+                    "    eye_l_obj.data.materials.append(em)\n"
                     "custom_col = bt.get_or_create_collection(scene, 'COL_STUDIO_LOOKDEV')\n"
                     "rogue_bg = bt.create_beveled_panel('SM_Studio_Backdrop', [(-3.0,-3.0),(3.0,-3.0),(3.0,3.0),(-3.0,3.0)], depth=0.05, location=(0,-2.4,1.0), collection=custom_col)\n"
                     "rogue_lgt_d = bpy.data.lights.new('Rogue_Light', type='SUN')\n"
@@ -194,7 +201,7 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "prop_vgs = [g.name for g in prop.vertex_groups if any(vg.group == g.index and vg.weight > 0.99 for v in prop.data.vertices for vg in v.groups)]\n"
                     f"exp = bt.export_and_verify_glb(scene, {json.dumps(str(glb_path))})\n"
                     "audit = bt.get_scene_audit(scene)\n"
-                    "print('__ORCH_JSON__:' + json.dumps({'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'sleeve_min_y': sleeve_min_y, 'skirt_min_z': min(skirt_zs), 'skirt_x_span': max(skirt_xs)-min(skirt_xs), 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'integ_eye_occ_ok': integ_eye_occ['ok'], 'backdrop_purged': backdrop_purged, 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
+                    "print('__ORCH_JSON__:' + json.dumps({'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'sleeve_min_y': sleeve_min_y, 'skirt_min_z': min(skirt_zs), 'skirt_x_span': max(skirt_xs)-min(skirt_xs), 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'integ_eye_occ_ok': integ_eye_occ['ok'], 'integ_eye_split_ok': integ_eye_split['ok'], 'backdrop_purged': backdrop_purged, 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
                 )
                 out = adapter.execute_blender_json(code, user_prompt="Test Base Mesh PoC", stage="test_base_mesh")["parsed"]
                 self.assertEqual(out["rot_deg"], 0.0)
@@ -211,6 +218,7 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                 self.assertFalse(out["integ_spike_ok"])
                 self.assertFalse(out["integ_chest_lip_ok"])
                 self.assertFalse(out["integ_eye_occ_ok"])
+                self.assertFalse(out["integ_eye_split_ok"])
                 self.assertTrue(out["backdrop_purged"])
                 self.assertGreaterEqual(out["exp"]["reimport_armature_count"], 1)
                 self.assertTrue(out["studio_evicted"])
