@@ -132,11 +132,14 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "face_res = bmo.style_face_features(body, collection=col)\n"
                     "sleeve_l = bmo.extract_sleeve_from_arm(body, 'SM_TestSleeveL', side='L', collection=col)\n"
                     "sleeve_min_y = min((sleeve_l.matrix_world @ v.co).y for v in sleeve_l.data.vertices)\n"
-                    "tunic = bmo.extract_garment_from_body(body, 'SM_TestTunic', z_min=0.72, z_max=1.32, x_abs_max=0.22, surface_offset_m=0.008, thickness_m=0.004, bottom_flare=0.06, collection=col)\n"
-                    "hem_trim = bmo.extract_hem_trim_from_garment(tunic, 'SM_TestHemTrim', edge='bottom', collection=col)\n"
+                    "tunic = bmo.extract_garment_from_body(body, 'SM_TestTunic', z_min=0.95, z_max=1.32, x_abs_max=0.18, surface_offset_m=0.008, thickness_m=0.004, collection=col)\n"
+                    "skirt = bmo.create_flared_skirt_from_waist(body, 'SM_TestSkirt', hem_z=0.64, flare_radius_add=0.095, collection=col)\n"
+                    "skirt_xs = [(skirt.matrix_world @ v.co).x for v in skirt.data.vertices]\n"
+                    "skirt_zs = [(skirt.matrix_world @ v.co).z for v in skirt.data.vertices]\n"
+                    "hem_trim = bmo.extract_hem_trim_from_garment(skirt, 'SM_TestHemTrim', edge='bottom', collection=col)\n"
                     "boots_res = bmo.create_fitted_boots(body, 'SM_Boots', shaft_top_z=0.30, collection=col)\n"
                     "boots_zs = [(boots_res['boots'].matrix_world @ v.co).z for v in boots_res['boots'].data.vertices]\n"
-                    "hair = bmo.build_layered_curve_hair('SM_Hair', body, auto_crown_braid=True, auto_flowing_back={'length_m': 0.45}, auto_side_locks={'length_m': 0.28}, collection=col)\n"
+                    "hair = bmo.build_layered_curve_hair('SM_Hair', body, auto_crown_braid=True, auto_flowing_back={'length_m': 0.52}, auto_side_locks={'length_m': 0.30}, collection=col)\n"
                     "braid_obj = bpy.data.objects['SM_Hair_Braid_0']\n"
                     "braid_xs = [(braid_obj.matrix_world @ v.co).x for v in braid_obj.data.vertices]\n"
                     "braid_ys = [(braid_obj.matrix_world @ v.co).y for v in braid_obj.data.vertices]\n"
@@ -144,13 +147,25 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "bt.smart_uv_unwrap(prop)\n"
                     "grip = bmo.pose_hand_and_attach_prop(body, side='L', prop_obj=prop)\n"
                     "integ_ok = bmo.audit_base_mesh_integrity(scene)\n"
-                    "# Check fail-closed detection on extreme spike + chest-lips + ShadowCatcher eviction from COL_Export\n"
+                    "# Check fail-closed detection on extreme spike + chest-lips + eye-occluding hair card + studio backdrop purge\n"
                     "spike_obj = bt.create_beveled_panel('SM_SpikeTmp', [(-0.02,0),(0.02,0),(0.02,3.2),(-0.02,3.2)], depth=0.01, collection=col)\n"
                     "integ_spike = bmo.audit_base_mesh_integrity(scene)\n"
                     "bt.remove_object_if_exists('SM_SpikeTmp')\n"
                     "chest_lip = bt.create_beveled_panel('GEO_Mouth_Lips', [(-0.01,-0.01),(0.01,-0.01),(0.01,0.01),(-0.01,0.01)], depth=0.01, location=(0.0,-0.1,1.15), collection=col)\n"
                     "integ_chest_lip = bmo.audit_base_mesh_integrity(scene)\n"
                     "bt.remove_object_if_exists('GEO_Mouth_Lips')\n"
+                    "eyez = sty['landmarks_after']['eye_L'][2]\n"
+                    "eyey = sty['landmarks_after']['eye_L'][1]\n"
+                    "bad_card = bt.create_beveled_panel('SM_Hair_ManeCards', [(-0.06,-0.06),(0.06,-0.06),(0.06,0.06),(-0.06,0.06)], depth=0.14, location=(0.0, eyey - 0.06, eyez - 0.07), collection=col)\n"
+                    "integ_eye_occ = bmo.audit_base_mesh_integrity(scene)\n"
+                    "bt.remove_object_if_exists('SM_Hair_ManeCards')\n"
+                    "custom_col = bt.get_or_create_collection(scene, 'COL_STUDIO_LOOKDEV')\n"
+                    "rogue_bg = bt.create_beveled_panel('SM_Studio_Backdrop', [(-3.0,-3.0),(3.0,-3.0),(3.0,3.0),(-3.0,3.0)], depth=0.05, location=(0,-2.4,1.0), collection=custom_col)\n"
+                    "rogue_lgt_d = bpy.data.lights.new('Rogue_Light', type='SUN')\n"
+                    "rogue_lgt = bpy.data.objects.new('Rogue_Light', rogue_lgt_d)\n"
+                    "custom_col.objects.link(rogue_lgt)\n"
+                    "bt._setup_studio_lights_and_world(scene, bt._compute_collection_bounds(scene))\n"
+                    "backdrop_purged = (bpy.data.objects.get('SM_Studio_Backdrop') is None and bpy.data.objects.get('Rogue_Light') is None)\n"
                     "studio_dummy = bpy.data.objects.new('SM_Studio_ShadowCatcher', bpy.data.meshes.new('SM_Studio_DummyMesh'))\n"
                     "studio_dummy.is_shadow_catcher = True\n"
                     "col.objects.link(studio_dummy)\n"
@@ -163,6 +178,7 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "m_gold = bt.make_pbr_material('MAT_Gold', '#D8A62E', roughness=0.28, metallic=0.9)\n"
                     "bt.assign_material(body, m_skin)\n"
                     "bt.assign_material(tunic, m_tunic)\n"
+                    "bt.assign_material(skirt, m_tunic)\n"
                     "bt.assign_material(sleeve_l, m_tunic)\n"
                     "bt.assign_material(hem_trim, m_gold)\n"
                     "bt.assign_material(boots_res['boots'], m_boot)\n"
@@ -171,16 +187,22 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                     "    bt.assign_material(bpy.data.objects[hn], m_hair)\n"
                     "bt.assign_material(prop, m_tunic)\n"
                     "bt.create_rig_and_bind(scene, [{'name': 'Root', 'head': (0,0,0), 'tail': (0,0,0.2), 'parent': None}, {'name': 'Hand_L', 'head': tuple(arm_pose['wrist_L']), 'tail': tuple(arm_pose['hand_L']), 'parent': 'Root'}])\n"
+                    "# Move armature into lowercase col_export to verify fallback armature export selection!\n"
+                    "arm_o = bpy.data.objects['ARM_Asset']\n"
+                    "lc_col = bt.get_or_create_collection(scene, 'col_export')\n"
+                    "bt.link_to_collection(arm_o, lc_col)\n"
                     "prop_vgs = [g.name for g in prop.vertex_groups if any(vg.group == g.index and vg.weight > 0.99 for v in prop.data.vertices for vg in v.groups)]\n"
                     f"exp = bt.export_and_verify_glb(scene, {json.dumps(str(glb_path))})\n"
                     "audit = bt.get_scene_audit(scene)\n"
-                    "print('__ORCH_JSON__:' + json.dumps({'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'sleeve_min_y': sleeve_min_y, 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
+                    "print('__ORCH_JSON__:' + json.dumps({'rot_deg': res['rotate_z_deg'], 'actual_eye_z': actual_eye_z, 'lm_eye_z': lm_eye_z, 'face_res': face_res, 'sleeve_min_y': sleeve_min_y, 'skirt_min_z': min(skirt_zs), 'skirt_x_span': max(skirt_xs)-min(skirt_xs), 'boots_min_z': min(boots_zs), 'boots_max_z': max(boots_zs), 'braid_x_span': max(braid_xs)-min(braid_xs), 'braid_y_span': max(braid_ys)-min(braid_ys), 'hand_y_before': hand_y_before, 'hand_y_after': hand_y_after, 'integ_ok': integ_ok, 'integ_spike_ok': integ_spike['ok'], 'integ_chest_lip_ok': integ_chest_lip['ok'], 'integ_eye_occ_ok': integ_eye_occ['ok'], 'backdrop_purged': backdrop_purged, 'studio_evicted': studio_evicted, 'prop_vgs': prop_vgs, 'load_eyes': res['companion_eyes'], 'sty_moved': sty['vertices_modified'], 'hair': hair, 'grip': grip, 'exp': exp, 'audit': audit}))\n"
                 )
                 out = adapter.execute_blender_json(code, user_prompt="Test Base Mesh PoC", stage="test_base_mesh")["parsed"]
                 self.assertEqual(out["rot_deg"], 0.0)
                 self.assertAlmostEqual(out["lm_eye_z"], out["actual_eye_z"], delta=0.005)
                 self.assertTrue(out["face_res"]["ok"])
                 self.assertLess(out["sleeve_min_y"], -0.10)
+                self.assertAlmostEqual(out["skirt_min_z"], 0.64, delta=0.025)
+                self.assertGreater(out["skirt_x_span"], 0.30)
                 self.assertGreaterEqual(out["boots_min_z"], -0.005)
                 self.assertLessEqual(out["boots_max_z"], 0.36)
                 self.assertGreater(out["braid_x_span"], out["braid_y_span"])
@@ -188,6 +210,9 @@ class TestQwenBaseMeshPoC(unittest.TestCase):
                 self.assertTrue(out["integ_ok"]["ok"], out["integ_ok"])
                 self.assertFalse(out["integ_spike_ok"])
                 self.assertFalse(out["integ_chest_lip_ok"])
+                self.assertFalse(out["integ_eye_occ_ok"])
+                self.assertTrue(out["backdrop_purged"])
+                self.assertGreaterEqual(out["exp"]["reimport_armature_count"], 1)
                 self.assertTrue(out["studio_evicted"])
                 self.assertEqual(out["prop_vgs"], ["Hand_L"])
                 self.assertGreater(len(out["load_eyes"]), 0)

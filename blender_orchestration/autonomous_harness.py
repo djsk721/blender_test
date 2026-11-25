@@ -108,19 +108,22 @@ Coordinate convention: metric (`1 unit = 1m`), `-Y` is FRONT, `+Z` is UP, ground
    - Controls (clamped): `head_scale`, `eye_size`, `eye_separation`, `jaw_width`, `chin_length`, `nose_size`, `ear_pointedness`, `shoulder_width`, `waist_taper`, `hip_width`, `torso_length`, `limb_slenderness`, `hand_scale`, `neck_length`. Syncs companion eyes idempotently.
 4. `bmo.style_face_features(body_obj, iris_hex="#2EA87A", pupil_hex="#0B1318", sclera_hex="#F7F7F5", brow_hex="#9A7236", lip_hex="#D98B7C", lash_hex="#2A1E1A", eye_scale=1.0, collection=col_export)`
    - Seats stylized emerald anime eyeballs cleanly in orbital sockets + surface-snapped `SM_Eyelashes` & `SM_Eyebrows` + lip tint on `SM_BaseBody` (NEVER create a separate floating `GEO_Mouth_Lips`!).
-5. `bmo.extract_garment_from_body(body_obj, name, z_min=..., z_max=..., x_abs_max=None, x_abs_min=None, side=None, y_min=None, y_max=None, surface_offset_m=0.008, thickness_m=0.004, bottom_flare=0.0, top_collar_flare=0.0, add_shrinkwrap=False, subsurf=1, collection=col_export)`
-   - Creates body-conforming garments directly from body faces with clamped solidify & zero floating panels!
-6. `bmo.extract_sleeve_from_arm(body_obj, name, side="L", start_frac=0.04, end_frac=0.88, surface_offset_m=0.010, thickness_m=0.004, cuff_flare=0.008, subsurf=1, collection=col_export)`
+5. `bmo.extract_garment_from_body(body_obj, name, z_min=..., z_max=..., x_abs_max=0.18, x_abs_min=None, side=None, y_min=None, y_max=None, surface_offset_m=0.008, thickness_m=0.004, bottom_flare=0.0, top_collar_flare=0.0, add_shrinkwrap=False, subsurf=1, collection=col_export)`
+   - Creates body-conforming garments directly from torso faces (keep tunic bodice `x_abs_max=0.18`, `z_max=neck_z - 0.015`; NEVER extract below `hip_z` for a skirt!).
+6. `bmo.create_flared_skirt_from_waist(body_obj, name="SM_Tunic_Skirt", waist_z=None, hem_z=0.64, flare_radius_add=0.095, collection=col_export)`
+   - Builds a continuous pleated A-line tunic skirt from waist past thighs (ZERO inner-thigh shorts split!).
+7. `bmo.extract_sleeve_from_arm(body_obj, name, side="L", start_frac=0.04, end_frac=0.88, surface_offset_m=0.010, thickness_m=0.004, cuff_flare=0.008, subsurf=1, collection=col_export)`
    - Call AFTER `pose_arm_for_prop_hold` so sleeves follow posed/bent arms seamlessly (ZERO floating A-pose tubes!).
-7. `bmo.create_fitted_boots(body_obj, name="SM_Boots", shaft_top_z=0.30, cuff_height=0.055, sole_thickness=0.018, clearance_m=0.011, collection=col_export)`
-   - Lofts smooth grounded mid-calf boots & fold-over cuffs enveloping feet cleanly (`min_z=0.0`, ZERO toe-crevice spikes!).
-8. `bmo.extract_hem_trim_from_garment(garment_obj, name, edge="bottom", band_height_m=0.022, surface_offset_m=0.004, thickness_m=0.003, collection=col_export)`
+8. `bmo.create_fitted_boots(body_obj, name="SM_Boots", shaft_top_z=0.30, cuff_height=0.068, sole_thickness=0.018, clearance_m=0.017, collection=col_export)`
+   - Lofts smooth grounded mid-calf boots & fold-over cuffs enveloping feet cleanly (`min_z=0.0`, ZERO toe-crevice or heel poke-through!).
+9. `bmo.extract_hem_trim_from_garment(garment_obj, name, edge="bottom", band_height_m=0.022, surface_offset_m=0.004, thickness_m=0.003, collection=col_export)`
    - Extracts surface-conforming gold trim bands directly from garment top/bottom edges (NEVER floating torus rings!).
-9. `bmo.build_layered_curve_hair(name_prefix, body_obj, scalp_offset_m=0.011, scalp_thickness_m=0.014, auto_crown_braid=True, auto_flowing_back={"length_m": 0.52, "lock_count": 11}, auto_side_locks={"length_m": 0.30}, primary_locks=None, secondary_locks=None, braid_paths=None, collection=col_export)`
-   - Builds fitted scalp cap + ear-to-ear wrapped crown braid + layered tapered flowing locks + cheek locks (zero spikes/sawtooth slabs).
-10. `bmo.pose_arm_for_prop_hold(body_obj, side="L", shoulder_pitch_deg=32.0, shoulder_inward_deg=18.0, elbow_bend_deg=72.0)` -> bends shoulder+elbow forward BEFORE `extract_sleeve_from_arm`.
-11. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)`
-12. Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
+10. `bmo.build_layered_curve_hair(name_prefix, body_obj, scalp_offset_m=0.011, scalp_thickness_m=0.014, auto_crown_braid=True, auto_flowing_back={"length_m": 0.58, "lock_count": 11}, auto_side_locks={"length_m": 0.30}, primary_locks=None, secondary_locks=None, braid_paths=None, collection=col_export)`
+   - Builds fitted scalp cap + bold ear-to-ear wrapped crown braid + layered tapered flowing locks + cheek locks & wispy bangs above eyebrows (NEVER add flat hair-card planes like `SM_Hair_ManeCards`!).
+11. `bmo.pose_arm_for_prop_hold(body_obj, side="L", shoulder_pitch_deg=32.0, shoulder_inward_deg=18.0, elbow_bend_deg=72.0)` -> bends shoulder+elbow forward BEFORE `extract_sleeve_from_arm`.
+12. `bmo.pose_hand_and_attach_prop(body_obj, side="L", finger_curl=0.58, thumb_oppose=0.45, prop_obj=prop_obj)` -> keep ONLY ONE beveled upright `SM_Prop_RunicSlate` facing `-Y`.
+13. STUDIO RULE: NEVER create custom studio backdrops, floors, lights, collections (`COL_STUDIO_*`), or cameras — `COL_Studio` provides all studio lighting and cameras automatically!
+14. Core `bt.*`: `bt.remove_object_if_exists`, `bt.join_objects`, `bt.loft_sections`, `bt.create_quad_sphere`, `bt.create_beveled_panel`, `bt.deform_mesh_sculpt`, `bt.smart_uv_unwrap`, `bt.project_planar_uv`, `bt.create_painted_image_texture`, `bt.make_pbr_material`, `bt.assign_material`, `bt.create_rig_and_bind`, `bt.create_cycle_animation`.
 """
 
 
@@ -946,6 +949,10 @@ class AutonomousBlenderHarness:
                     fallback_checkpoint=last_good_checkpoint,
                 )
                 audit_latest = blk_r["audit"]
+                if not technical_gates["blockout_created"]:
+                    technical_gates["blockout_created"] = bool(
+                        audit_latest.get("mesh_count", 0) > 0 and audit_latest.get("total_triangles", 0) > 500
+                    )
                 anomalies_latest = blk_r.get("anomalies") or {}
                 prior_blk_renders = blk_r["render"]["renders"]
                 if is_base_mesh_mode:
@@ -1011,12 +1018,12 @@ class AutonomousBlenderHarness:
                                 f"You are the Body-Aware Garment, Curve-Hair & Prop Specialist (Stage 3 — {pid}: {pspec.get('title', '')}).",
                                 "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
                                 "RULES FOR BASE MESH MODE:",
-                                "- Preserve `SM_BaseBody` and `SM_BaseBody_Eye_L`/`R` cleanly at their exact normalized scale/location (`1.65m` tall, facing `-Y`, `min_z=0.0`) — NEVER rescale, rotate, or move `SM_BaseBody` or delete `SM_BaseBody_Eye_L/R`, and NEVER link `SM_Studio_*` objects into `col_export`!",
-                                "- FACE: Use `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` for seated anime eyes, surface-snapped `SM_Eyelashes` & `SM_Eyebrows`, and lip tint (NEVER create a separate `GEO_Mouth_Lips` mesh or relocate eyes onto forehead!).",
-                                "- ARMS, HANDS & HELD PROP: Call `bmo.pose_arm_for_prop_hold(body_obj, side='L')` BEFORE extracting sleeves, then use `bmo.extract_sleeve_from_arm(body_obj, 'SM_Sleeves_L', side='L', collection=col_export)` and `side='R'` so sleeves follow the posed arms cleanly (NEVER build separate A-pose sleeve tubes!). Build hero prop (`SM_Prop_RunicSlate`) and call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)`.",
-                                "- GARMENTS & TRIMS: Use `bmo.extract_garment_from_body(body_obj, ..., collection=col_export)` (`x_abs_max=0.20` for torso bodice/skirt/leggings) and `bmo.extract_hem_trim_from_garment(...)` for collar and skirt gold hems (NEVER use floating torus rings!).",
-                                "- BOOTS: ALWAYS use `bmo.create_fitted_boots(body_obj, 'SM_Boots', shaft_top_z=0.30, collection=col_export)` for smooth grounded boots & cuffs (NEVER call `extract_garment_from_body` over toes!).",
-                                "- HAIR: Use `bmo.build_layered_curve_hair('SM_Hair', body_obj, auto_crown_braid=True, auto_flowing_back={'length_m': 0.52, 'lock_count': 11}, auto_side_locks={'length_m': 0.30}, collection=col_export)` so hair has a wrapped ear-to-ear crown braid and layered flowing locks (ZERO upward spikes or flat sawtooth slabs!).",
+                                "- Preserve `SM_BaseBody` and `SM_BaseBody_Eye_L`/`R` cleanly at their exact normalized scale/location (`1.65m` tall, facing `-Y`, `min_z=0.0`) — NEVER rescale, rotate, or move `SM_BaseBody` or delete `SM_BaseBody_Eye_L/R`, NEVER link `SM_Studio_*` objects into `col_export`, and NEVER create custom studio backdrops, floors, lights, or cameras!",
+                                "- FACE: Use `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` for seated anime eyes, surface-snapped `SM_Eyelashes` & `SM_Eyebrows`, and lip tint (NEVER create a separate `GEO_Mouth_Lips` mesh or occlude eyes with hair cards!).",
+                                "- ARMS, HANDS & HELD PROP: Call `bmo.pose_arm_for_prop_hold(body_obj, side='L')` BEFORE extracting sleeves, then use `bmo.extract_sleeve_from_arm(body_obj, ...)` per arm (`start_frac=0.02..0.45` blue upper sleeve, `0.42..0.86` cream forearm sleeve, `0.84..0.98` dark fingerless glove) so sleeves follow posed arms cleanly (NEVER wrap hands in blue tunic!). Build ONLY ONE beveled upright `SM_Prop_RunicSlate` facing `-Y` and call `bmo.pose_hand_and_attach_prop(body_obj, side='L', prop_obj=prop_obj)`.",
+                                "- GARMENTS & SKIRT: Keep tunic bodice `x_abs_max=0.18` and `z_max <= neck_z - 0.015`, use `bmo.create_flared_skirt_from_waist(body_obj, 'SM_Tunic_Skirt', hem_z=0.64, flare_radius_add=0.095, collection=col_export)` for a single continuous A-line pleated skirt (NEVER extract below `hip_z` into leg shorts!), plus `bmo.extract_hem_trim_from_garment(...)` for collar and skirt gold trim (NEVER floating torus rings!).",
+                                "- BOOTS: ALWAYS use `bmo.create_fitted_boots(body_obj, 'SM_Boots', shaft_top_z=0.30, collection=col_export)` for smooth grounded boots & cuffs.",
+                                "- HAIR: Use `bmo.build_layered_curve_hair('SM_Hair', body_obj, auto_crown_braid=True, auto_flowing_back={'length_m': 0.58, 'lock_count': 11}, auto_side_locks={'length_m': 0.30}, collection=col_export)` for crown braid + tapered flowing locks + wispy bangs above eyebrows (NEVER build planar `SM_Hair_ManeCards`!).",
                                 f"Verified Landmarks:\n{landmarks_summary}",
                                 f"Pass Spec:\n{json.dumps(pspec, indent=2)[:1500]}",
                                 f"Design Spec:\n{spec_compact[:2200]}",
@@ -1068,6 +1075,9 @@ class AutonomousBlenderHarness:
                 _save_good_ckpt(checkpoints_dir / "03_detailed_modeling_p0.blend", "stage_03_save")
 
                 # Independent Geometry Clay Review & up to 2 High-Impact Structural Refinement Passes
+                best_geo_score = -1.0
+                best_geo_blend = checkpoints_dir / "03_detailed_modeling_best.blend"
+                last_geo_score = -1.0
                 max_geo_fixes = min(2, self.max_stage_corrections)
                 for fix_idx in range(0, max_geo_fixes + 1):
                     geo_r = self._render_views(
@@ -1099,6 +1109,10 @@ class AutonomousBlenderHarness:
                         raise QuotaBlockedError(rev["quota_blocked"])
                     stage_reviews["detailed_modeling"].append(rev)
                     (reviews_dir / f"stage_03_geometry_p{fix_idx}.json").write_text(json.dumps(rev, indent=2) + "\n", encoding="utf-8")
+                    last_geo_score = float(rev.get("score", 0.0))
+                    if last_geo_score >= best_geo_score:
+                        best_geo_score = last_geo_score
+                        _save_good_ckpt(best_geo_blend, f"stage_03_save_best_{fix_idx}")
                     prior_geo_renders = cur_renders
                     if rev.get("passed") or fix_idx >= max_geo_fixes:
                         break
@@ -1114,7 +1128,7 @@ class AutonomousBlenderHarness:
                             "CRITICAL FIX RULES:",
                             "- Execute REAL 3D mesh/sculpt/topology fixes ONLY on the defective components listed below AND any GEOMETRY_ANOMALIES_TO_FIX.",
                             "- ALWAYS delete old defective meshes (`bt.remove_object_if_exists(...)`) BEFORE building replacements — NEVER stack duplicate eyelids, duplicate sleeves, or overlapping patches!",
-                            "- Eliminate ANY double sleeves, elbow socket seams, oversized forehead/excessive downward head pitch, floating fragments, needle spikes, coplanar Z-fighting overlays, or floating feet (ensure `min_z ≈ 0.0`).",
+                            "- Eliminate ANY double sleeves, elbow socket seams, oversized forehead/excessive downward head pitch, floating fragments, needle spikes, coplanar Z-fighting overlays, eye-occluding hair cards, studio walls/lights, or floating feet (ensure `min_z ≈ 0.0`).",
                             f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
                             "Independent Reviewer Defects:\n" + json.dumps(rev.get("defects", []), indent=2)[:2800],
                             "Reviewer Observations:\n" + json.dumps(rev.get("observations_by_view", {}), indent=2)[:1200],
@@ -1138,6 +1152,19 @@ class AutonomousBlenderHarness:
                         base_mesh_manifest=base_mesh_manifest,
                     )
                     _save_good_ckpt(checkpoints_dir / f"03_detailed_modeling_fix{fix_idx + 1}.blend", f"stage_03_save_fix_{fix_idx + 1}")
+
+                if best_geo_blend.is_file() and last_geo_score < best_geo_score:
+                    restored_geo = self._run_blender_util(
+                        adapter,
+                        f"bpy.ops.wm.open_mainfile(filepath={json.dumps(str(best_geo_blend))})\n"
+                        f"s = bpy.data.scenes[{json.dumps(scene_name)}]\n"
+                        "print('__ORCH_JSON__:' + json.dumps({'restored_best_geo': True, 'audit': bt.get_scene_audit(s)}))\n",
+                        stage_label="stage_03_restore_best",
+                        user_prompt=prompt,
+                    )
+                    if restored_geo.get("audit"):
+                        audit_latest = restored_geo["audit"]
+                    last_good_checkpoint = best_geo_blend
 
                 # Update modeling/sculpting/hair contracts truthfully
                 for sid in (primary_disc_skill, "sculpting", "hair-groom"):
@@ -1176,9 +1203,9 @@ class AutonomousBlenderHarness:
                         "You are the UV, Texture, Stylized PBR Material & Lookdev Specialist Agent (Stage 4).",
                         "Do NOT call any tools. Return ONLY a single ```python ... ``` script.",
                         "CRITICAL LOOKDEV STANDARDS:",
-                        "- Preserve existing `UVMap` and positions on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (NEVER shrink, move, or drop them, and NEVER link `SM_Studio_*` to `col_export`!). Unwrap any new `SM_*` meshes lacking UVs (`bt.project_planar_uv` on planar front emblems computed from exact vertex bounds).",
-                        "- Call `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` if eyes/brows/lashes need refreshing (preserves `MAT_Eyes_Stylized` bright sclera/iris/catchlights!).",
-                        "- Build multi-layer procedural PBR materials via `bt.make_pbr_material(..., ao_darken=0.32, ao_distance=0.14)` + subtle fabric/leather micro-bump (`noise_bump=0.02..0.04`), metallic gold embroidery trim (`metallic=0.9, roughness=0.25`), anisotropic golden blonde hair (`#E3AE3D, roughness=0.44`), glowing cyan runic slate emblem (`1024x1024` `bt.create_painted_image_texture` with `emission_texture`, `emission_strength=6.5`), packed (`pack=True`). Assign a `MAT_*` material to EVERY mesh in `col_export` — ZERO untextured white/clay parts!",
+                        "- Preserve existing `UVMap` and positions on `SM_BaseBody`, `SM_BaseBody_Eye_L`, `SM_BaseBody_Eye_R` (NEVER shrink, move, or drop them, NEVER link `SM_Studio_*` to `col_export`, and NEVER create custom studio lights, backdrops, floors, or cameras!). Unwrap any new `SM_*` meshes lacking UVs (`bt.project_planar_uv` on planar front emblems computed from exact vertex bounds).",
+                        "- Call `bmo.style_face_features(body_obj, iris_hex='#2EA87A', brow_hex='#9A7236', lip_hex='#D98B7C', collection=col_export)` so eyes/brows/lashes stay seated and bright without pale pastel washout (never paint cyan streaks onto hair!).",
+                        "- Build rich deep multi-layer PBR shaders via `bt.make_pbr_material(..., ao_darken=0.32, ao_distance=0.14)` (`#1A5BC4` royal blue tunic, `#E3A93C` golden blonde hair roughness=0.44, `#EFE6D2` cream undershirt, `#2A2A32` charcoal leggings, `#5A3820` brown leather boots/belt, `#D8A62E` metallic gold trim metallic=0.9, dark gunmetal slate with `1024x1024` `bt.create_painted_image_texture` `#30E8FF` cyan rune/lens `emission_texture` & `emission_strength=6.5`, packed). Assign a `MAT_*` material to EVERY mesh in `col_export` — ZERO untextured parts!",
                         f"Design Spec Palette & Texture Plan:\n{spec_compact[:2400]}",
                         "Live Scene Inventory:\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest)[:1800],
                         "Loaded Skills:\n" + s4_skill_ctx,

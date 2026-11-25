@@ -1133,12 +1133,12 @@ def create_fitted_boots(
     name: str = "SM_Boots",
     *,
     shaft_top_z: float = 0.30,
-    cuff_height: float = 0.055,
+    cuff_height: float = 0.068,
     sole_thickness: float = 0.018,
-    clearance_m: float = 0.011,
+    clearance_m: float = 0.017,
     collection: Any | None = None,
 ) -> dict[str, Any]:
-    """Loft smooth, grounded mid-calf boots & fold-over cuffs enveloping body feet (zero toe-crevice spikes!)."""
+    """Loft smooth, grounded mid-calf boots & fold-over cuffs enveloping body feet (zero toe-crevice or heel poke-through!)."""
     _require_blender()
     if body_obj is None or body_obj.type != "MESH" or body_obj.data is None:
         raise ValueError("Expected MESH body_obj")
@@ -1167,18 +1167,18 @@ def create_fitted_boots(
             ry = max(0.5 * (max(ys) - min(ys)) + clearance_m, fallback_ry)
             return cx, cy, rx, ry
 
-        fcx, fcy, frx, fry = _band(0.0, 0.068, 0.044, 0.098)
-        acx, acy, arx, ary = _band(max(0.07, ankle_z_est - 0.025), ankle_z_est + 0.030, 0.042, 0.052)
-        mcx, mcy, mrx, mry = _band(0.5 * (ankle_z_est + shaft_top_z) - 0.025, 0.5 * (ankle_z_est + shaft_top_z) + 0.025, 0.048, 0.056)
-        tcx, tcy, trx, try_ = _band(shaft_top_z - 0.025, shaft_top_z + 0.025, 0.052, 0.060)
+        fcx, fcy, frx, fry = _band(0.0, 0.068, 0.048, 0.104)
+        acx, acy, arx, ary = _band(max(0.07, ankle_z_est - 0.025), ankle_z_est + 0.030, 0.046, 0.056)
+        mcx, mcy, mrx, mry = _band(0.5 * (ankle_z_est + shaft_top_z) - 0.025, 0.5 * (ankle_z_est + shaft_top_z) + 0.025, 0.052, 0.060)
+        tcx, tcy, trx, try_ = _band(shaft_top_z - 0.025, shaft_top_z + 0.025, 0.056, 0.064)
 
         sections = [
-            {"center": (fcx, fcy - 0.004, 0.000), "rx": frx * 1.04, "ry": fry * 1.03, "squash_front": 1.02, "squash_back": 0.84},
-            {"center": (fcx, fcy - 0.004, sole_thickness), "rx": frx * 1.05, "ry": fry * 1.03, "squash_front": 1.02, "squash_back": 0.84},
-            {"center": (0.5 * (fcx + acx), fcy * 0.55 + acy * 0.45, 0.064), "rx": frx * 0.96, "ry": fry * 0.78, "squash_front": 1.04, "squash_back": 0.88},
-            {"center": (acx, acy, ankle_z_est + 0.012), "rx": arx, "ry": ary},
+            {"center": (fcx, fcy + 0.002, 0.000), "rx": frx * 1.06, "ry": fry * 1.06, "squash_front": 1.03, "squash_back": 0.98},
+            {"center": (fcx, fcy + 0.002, sole_thickness), "rx": frx * 1.07, "ry": fry * 1.06, "squash_front": 1.03, "squash_back": 0.98},
+            {"center": (0.5 * (fcx + acx), fcy * 0.50 + acy * 0.50 + 0.004, 0.064), "rx": frx * 1.00, "ry": fry * 0.84, "squash_front": 1.04, "squash_back": 0.98},
+            {"center": (acx, acy + 0.003, ankle_z_est + 0.012), "rx": arx, "ry": ary + 0.004, "squash_front": 1.0, "squash_back": 0.98},
             {"center": (mcx, mcy, 0.5 * (ankle_z_est + shaft_top_z)), "rx": mrx, "ry": mry},
-            {"center": (tcx, tcy, shaft_top_z), "rx": trx + 0.003, "ry": try_ + 0.003},
+            {"center": (tcx, tcy, shaft_top_z), "rx": trx + 0.004, "ry": try_ + 0.004},
         ]
         bobj = bt.loft_sections(
             f"{name}_{side_tag}",
@@ -1192,12 +1192,12 @@ def create_fitted_boots(
         )
         boot_parts.append(bobj)
 
-        c_bot = max(ankle_z_est + 0.03, shaft_top_z - cuff_height)
-        c_top = shaft_top_z + 0.012
+        c_bot = max(ankle_z_est + 0.025, shaft_top_z - cuff_height)
+        c_top = shaft_top_z + 0.014
         cuff_secs = [
-            {"center": (tcx, tcy, c_bot), "rx": trx + 0.011, "ry": try_ + 0.011},
-            {"center": (tcx, tcy, 0.5 * (c_bot + c_top)), "rx": trx + 0.013, "ry": try_ + 0.013},
-            {"center": (tcx, tcy, c_top), "rx": trx + 0.012, "ry": try_ + 0.012},
+            {"center": (tcx, tcy, c_bot), "rx": trx + 0.015, "ry": try_ + 0.015},
+            {"center": (tcx, tcy, 0.5 * (c_bot + c_top)), "rx": trx + 0.017, "ry": try_ + 0.017},
+            {"center": (tcx, tcy, c_top), "rx": trx + 0.015, "ry": try_ + 0.015},
         ]
         cobj = bt.loft_sections(
             f"{name}_Cuff_{side_tag}",
@@ -1231,6 +1231,97 @@ def create_fitted_boots(
         "cuff_name": cuff_obj.name,
         "shaft_top_z": round(shaft_top_z, 4),
     }
+
+
+def create_flared_skirt_from_waist(
+    body_obj: Any,
+    name: str = "SM_Tunic_Skirt",
+    *,
+    waist_z: float | None = None,
+    hem_z: float = 0.64,
+    top_clearance: float = 0.012,
+    flare_radius_add: float = 0.095,
+    pleat_count: int = 8,
+    pleat_amp: float = 0.008,
+    thickness_m: float = 0.004,
+    collection: Any | None = None,
+) -> Any:
+    """Loft a single continuous body-conforming A-line pleated tunic skirt from waist down past hips (zero thigh split!)."""
+    _require_blender()
+    if body_obj is None or body_obj.type != "MESH" or body_obj.data is None:
+        raise ValueError("Expected MESH body_obj")
+    col = collection or (body_obj.users_collection[0] if body_obj.users_collection else None)
+    bt.remove_object_if_exists(name)
+
+    verts_w, _ = _eval_mesh_world_verts(body_obj)
+    info = inspect_anatomical_regions(body_obj, assign_vertex_groups=False)
+    lm = info["landmarks"]
+    wz = float(waist_z if waist_z is not None else lm["waist"][2])
+    hz = float(lm["hips"][2])
+    hz = min(hz, wz - 0.05)
+    hem_z_val = min(float(hem_z), hz - 0.04)
+
+    def _torso_ring(z_target: float, fb_rx: float, fb_ry: float) -> tuple[float, float, float, float]:
+        band = [v for v in verts_w if abs(v.z - z_target) <= 0.035 and abs(v.x) <= 0.22]
+        if not band:
+            return 0.0, 0.0, fb_rx, fb_ry
+        xs = [v.x for v in band]
+        ys = [v.y for v in band]
+        return (
+            0.5 * (min(xs) + max(xs)),
+            0.5 * (min(ys) + max(ys)),
+            max(0.5 * (max(xs) - min(xs)), fb_rx),
+            max(0.5 * (max(ys) - min(ys)), fb_ry),
+        )
+
+    wcx, wcy, wrx, wry = _torso_ring(wz, 0.11, 0.085)
+    hcx, hcy, hrx, hry = _torso_ring(hz, 0.145, 0.105)
+    tcx, tcy, trx, try_ = _torso_ring(hem_z_val, 0.140, 0.095)
+
+    base_rx = max(wrx + top_clearance, hrx + 0.015)
+    base_ry = max(wry + top_clearance, hry + 0.015)
+    hem_rx = max(base_rx, trx + 0.025, hrx) + float(flare_radius_add)
+    hem_ry = max(base_ry, try_ + 0.025, hry) + float(flare_radius_add) * 0.85
+
+    segments = 32
+    rings: list[list[tuple[float, float, float]]] = []
+    n_rings = 5
+    z_top = wz + 0.012
+    for r_idx in range(n_rings):
+        t = r_idx / (n_rings - 1)  # 0 at waist -> 1 at hem
+        cz = z_top * (1.0 - t) + hem_z_val * t
+        # Smooth A-line expansion clearing hips cleanly
+        flare_t = t ** 1.15
+        cx = wcx * (1.0 - t) + hcx * t
+        cy = wcy * (1.0 - t) + hcy * t
+        rx = (wrx + top_clearance) * (1.0 - flare_t) + hem_rx * flare_t
+        ry = (wry + top_clearance) * (1.0 - flare_t) + hem_ry * flare_t
+        if 0 < r_idx < n_rings - 1:
+            rx = max(rx, hrx + 0.018 + 0.02 * t)
+            ry = max(ry, hry + 0.018 + 0.02 * t)
+        ring: list[tuple[float, float, float]] = []
+        for s_idx in range(segments):
+            ang = (2.0 * math.pi * s_idx) / segments
+            pleat = float(pleat_amp) * math.sin(float(pleat_count) * ang) * flare_t
+            px = cx + math.cos(ang) * (rx + pleat)
+            py = cy + math.sin(ang) * (ry + pleat)
+            ring.append((px, py, cz))
+        rings.append(ring)
+
+    obj = bt.loft_sections(
+        name,
+        rings,
+        segments=segments,
+        closed_u=True,
+        cap_start=False,
+        cap_end=False,
+        smooth=True,
+        subsurf=0,
+        collection=col,
+    )
+    bt.add_modifiers(obj, solidify=thickness_m, solidify_offset=1.0, solidify_even_offset=False, subsurf=1)
+    bt.smart_uv_unwrap(obj)
+    return obj
 
 
 def extract_sleeve_from_arm(
@@ -1491,9 +1582,9 @@ def build_layered_curve_hair(
 
     if auto_flowing_back:
         cfg = auto_flowing_back if isinstance(auto_flowing_back, dict) else {}
-        length_m = float(cfg.get("length_m", 0.52))
+        length_m = float(cfg.get("length_m", 0.58))
         lock_count = max(7, min(15, int(cfg.get("lock_count", 11))))
-        z_tip_base = max(0.58, head_top_z - length_m)
+        z_tip_base = max(0.56, head_top_z - length_m)
         y_clear = torso_back_y + 0.032
         for i in range(lock_count):
             frac = (2.0 * i / (lock_count - 1)) - 1.0  # -1..+1 across back width
@@ -1501,48 +1592,60 @@ def build_layered_curve_hair(
             y_root = head_cy + 0.065 + (1.0 - abs(frac)) * 0.032
             z_root = head_top_z - 0.025 - abs(frac) * 0.055
             r_p = _snap_head(x_root, y_root, z_root, 0.014)
-            z_mid = 0.5 * (z_root + z_tip_base) + 0.04 * (1.0 - abs(frac))
-            y_mid = max(r_p[1] + 0.028, y_clear + 0.018 * (1.0 - abs(frac)))
-            x_mid = frac * 0.145
+            z_upper = z_root * 0.68 + z_tip_base * 0.32 + 0.02 * (1.0 - abs(frac))
+            y_upper = max(r_p[1] + 0.024, y_clear + 0.014 * (1.0 - abs(frac)))
+            x_upper = frac * 0.130
+            z_lower = z_root * 0.30 + z_tip_base * 0.70 + 0.03 * (1.0 - abs(frac))
+            y_lower = max(y_upper + 0.008, y_clear + 0.024)
+            x_lower = frac * 0.155
             z_tip = z_tip_base + (abs(frac) * 0.09) + (0.035 if i % 2 else 0.0)
             x_tip = frac * 0.165
-            y_tip = max(y_mid + 0.012, y_clear + 0.028)
+            y_tip = max(y_lower + 0.006, y_clear + 0.030)
             prim_list.append(
                 {
-                    "points": [r_p, (x_mid, y_mid, z_mid), (x_tip, y_tip, z_tip)],
-                    "radii": [1.05, 1.32, 0.22],
+                    "points": [r_p, (x_upper, y_upper, z_upper), (x_lower, y_lower, z_lower), (x_tip, y_tip, z_tip)],
+                    "radii": [1.05, 1.35, 0.85, 0.06],
                     "width_scale": 1.35 if abs(frac) < 0.5 else 1.15,
-                    "tilts_deg": [frac * 18.0, frac * 14.0, frac * 10.0],
+                    "tilts_deg": [frac * 18.0, frac * 15.0, frac * 12.0, frac * 8.0],
                 }
             )
         for j in range(6):
             frac = (2.0 * j / 5.0) - 1.0
             x_r = frac * 0.085
             p0 = _snap_head(x_r, head_cy + 0.08, head_top_z - 0.01, 0.022)
-            p1 = (frac * 0.135, y_clear + 0.034, 0.5 * (head_top_z + z_tip_base) + 0.05)
-            p2 = (frac * 0.155, y_clear + 0.042, z_tip_base + 0.05 + (j % 2) * 0.04)
-            sec_list.append({"points": [p0, p1, p2], "radii": [0.9, 1.05, 0.18], "width_scale": 0.95})
+            p1 = (frac * 0.125, y_clear + 0.030, head_top_z * 0.65 + z_tip_base * 0.35 + 0.04)
+            p2 = (frac * 0.145, y_clear + 0.038, head_top_z * 0.30 + z_tip_base * 0.70 + 0.04)
+            p3 = (frac * 0.155, y_clear + 0.044, z_tip_base + 0.05 + (j % 2) * 0.04)
+            sec_list.append({"points": [p0, p1, p2, p3], "radii": [0.9, 1.08, 0.72, 0.06], "width_scale": 0.95})
 
     if auto_side_locks:
         scfg = auto_side_locks if isinstance(auto_side_locks, dict) else {}
         s_len = float(scfg.get("length_m", 0.30))
         z_bot = max(float(lm["shoulder_L"][2]) - 0.04, eye_z - s_len)
+        brow_z = float(lm.get("eyebrow_L", [0, 0, eye_z + 0.035])[2])
         for sg in (1.0, -1.0):
-            p0 = _snap_head(sg * 0.088, head_cy - 0.055, eye_z + 0.068, 0.015)
-            p1 = (sg * 0.105, head_cy - 0.068, eye_z - 0.045)
-            p2 = (sg * 0.092, head_cy - 0.052, z_bot)
+            # Cheek-framing locks strictly outside eye visibility band (|x| >= 0.092)
+            p0 = _snap_head(sg * 0.096, head_cy - 0.045, eye_z + 0.068, 0.015)
+            p1 = (sg * 0.112, head_cy - 0.055, eye_z - 0.040)
+            p2 = (sg * 0.098, head_cy - 0.045, z_bot)
             prim_list.append(
                 {
                     "points": [p0, p1, p2],
-                    "radii": [0.82, 0.95, 0.18],
+                    "radii": [0.85, 0.95, 0.08],
                     "width_scale": 0.85,
                     "tilts_deg": [sg * 32.0, sg * 24.0, sg * 12.0],
                 }
             )
-            p0_b = _snap_head(sg * 0.055, head_cy - 0.072, eye_z + 0.072, 0.015)
-            p1_b = _snap_head(sg * 0.082, head_cy - 0.066, eye_z + 0.012, 0.017)
-            p2_b = (sg * 0.088, head_cy - 0.052, eye_z - 0.075)
-            sec_list.append({"points": [p0_b, p1_b, p2_b], "radii": [0.70, 0.65, 0.15], "width_scale": 0.68})
+            p0_b = _snap_head(sg * 0.086, head_cy - 0.055, eye_z + 0.072, 0.015)
+            p1_b = _snap_head(sg * 0.098, head_cy - 0.052, eye_z + 0.012, 0.017)
+            p2_b = (sg * 0.096, head_cy - 0.042, eye_z - 0.075)
+            sec_list.append({"points": [p0_b, p1_b, p2_b], "radii": [0.72, 0.65, 0.08], "width_scale": 0.68})
+            # 2 wispy angled forehead bangs per side strictly ABOVE eyebrows (z >= brow_z + 0.008)
+            for b_k, bx_s, bx_e in ((0, 0.015, 0.072), (1, 0.042, 0.095)):
+                bp0 = _snap_head(sg * bx_s, head_cy - 0.068, eye_z + 0.085, 0.016)
+                bp1 = _snap_head(sg * (0.5 * (bx_s + bx_e)), head_cy - 0.076, max(brow_z + 0.018, eye_z + 0.054), 0.015)
+                bp2 = _snap_head(sg * bx_e, head_cy - 0.062, max(brow_z + 0.008, eye_z + 0.038), 0.014)
+                sec_list.append({"points": [bp0, bp1, bp2], "radii": [0.58, 0.50, 0.08], "width_scale": 0.55})
 
     if auto_crown_braid:
         bcfg = auto_crown_braid if isinstance(auto_crown_braid, dict) else {}
@@ -1553,12 +1656,12 @@ def build_layered_curve_hair(
             bx = -math.cos(ang) * 0.095
             bz = eye_z + 0.045 + math.sin(ang) * max(0.065, head_top_z - eye_z - 0.032)
             by = head_cy - 0.028 - 0.012 * math.sin(ang)
-            crown_pts.append(_snap_head(bx, by, bz, 0.018))
+            crown_pts.append(_snap_head(bx, by, bz, float(bcfg.get("outward_m", 0.020))))
         braid_list.append(
             {
                 "points": crown_pts,
-                "radius": float(bcfg.get("radius", 0.015)),
-                "twists": float(bcfg.get("twists", 8.0)),
+                "radius": float(bcfg.get("radius", 0.020)),
+                "twists": float(bcfg.get("twists", 9.0)),
             }
         )
 
@@ -1866,14 +1969,30 @@ def audit_base_mesh_integrity(
                         f"{ename} drifted vertically from orbital socket (z_mid={ez_mid:.3f}m vs orig={orig_eye_z:.3f}m)."
                     )
 
-    # Check COL_Export for studio object leaks, extreme spikes, chest-lips, or floor debris
+    # Check COL_Export for studio object leaks, extreme spikes, chest-lips, eye-occluding hair cards, or floor debris
+    eye_ref_y = None
+    eye_ref_zs: list[float] = []
+    for ename in (f"{body_name}_Eye_L", f"{body_name}_Eye_R"):
+        eobj = bpy.data.objects.get(ename)
+        if eobj is not None and eobj.type == "MESH":
+            everts, _ = _eval_mesh_world_verts(eobj)
+            if everts:
+                eye_ref_y = min(v.y for v in everts) if eye_ref_y is None else min(eye_ref_y, min(v.y for v in everts))
+                eye_ref_zs.append(0.5 * (min(v.z for v in everts) + max(v.z for v in everts)))
+    eye_ref_z = (sum(eye_ref_zs) / len(eye_ref_zs)) if eye_ref_zs else orig_eye_z
+
     objs = list(col.all_objects) if col else list(scene.objects)
     deps = bpy.context.evaluated_depsgraph_get()
     for o in objs:
         if o.type != "MESH" or o.hide_render:
             continue
-        if o.name.startswith("SM_Studio_") or getattr(o, "is_shadow_catcher", False):
-            issues.append(f"Studio object {o.name!r} must NOT be in {export_collection}.")
+        lname = o.name.lower()
+        if (
+            o.name.startswith("SM_Studio_")
+            or getattr(o, "is_shadow_catcher", False)
+            or any(tok in lname for tok in ("backdrop", "studio_floor", "studio_wall", "cyclorama", "bg_plane"))
+        ):
+            issues.append(f"Studio/backdrop object {o.name!r} must NOT be in {export_collection}.")
             continue
         eo = o.evaluated_get(deps)
         corners = [eo.matrix_world @ Vector(c) for c in eo.bound_box]
@@ -1885,8 +2004,32 @@ def audit_base_mesh_integrity(
             issues.append(f"Mesh {o.name!r} has extreme spike/extent bounds z=[{oz_min:.2f}..{oz_max:.2f}].")
         if oz_min < -0.03:
             issues.append(f"Mesh {o.name!r} extends below ground plane (min_z={oz_min:.2f}m).")
-        lname = o.name.lower()
         if ("mouth" in lname or "lip" in lname) and 0.5 * (oz_min + oz_max) < bz_max - 0.35:
             issues.append(f"Facial lip/mouth mesh {o.name!r} misplaced below head (z={0.5*(oz_min+oz_max):.3f}m).")
+        if eye_ref_z is not None and eye_ref_y is not None and any(tok in lname for tok in ("hair", "mane", "card")):
+            em_eval = eo.to_mesh()
+            try:
+                mw_o = eo.matrix_world
+                occ = 0
+                found_occ = False
+                for poly in em_eval.polygons:
+                    p_pts = [mw_o @ em_eval.vertices[vi].co for vi in poly.vertices]
+                    samples = list(p_pts) + [mw_o @ poly.center]
+                    for si in range(len(p_pts)):
+                        a, b = p_pts[si], p_pts[(si + 1) % len(p_pts)]
+                        samples.append(a.lerp(b, 0.25))
+                        samples.append(a.lerp(b, 0.50))
+                        samples.append(a.lerp(b, 0.75))
+                    for wp in samples:
+                        if abs(wp.x) <= 0.075 and (eye_ref_z - 0.025) <= wp.z <= (eye_ref_z + 0.020) and wp.y < (eye_ref_y - 0.015):
+                            occ += 1
+                            if occ >= 4:
+                                issues.append(f"Hair mesh {o.name!r} occludes front eyes (geometry crosses front eye box).")
+                                found_occ = True
+                                break
+                    if found_occ:
+                        break
+            finally:
+                eo.to_mesh_clear()
 
     return {"ok": len(issues) == 0, "issues": issues, "body_height_m": round(bh, 4), "body_min_z_m": round(bz_min, 4)}

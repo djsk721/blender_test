@@ -1883,10 +1883,17 @@ def assign_material(obj: Any, mat: Any) -> None:
 
 
 def _is_studio_object(obj: Any) -> bool:
-    return bool(
+    lname = obj.name.lower()
+    if (
         obj.name.startswith(("SM_Studio_", "LGT_Studio_", "CAM_Studio_", "CURVE_"))
         or getattr(obj, "is_shadow_catcher", False)
-    )
+        or any(tok in lname for tok in ("backdrop", "studio_floor", "studio_wall", "cyclorama", "bg_plane"))
+    ):
+        return True
+    ucols = list(getattr(obj, "users_collection", []) or [])
+    if ucols and all("studio" in c.name.lower() for c in ucols):
+        return True
+    return False
 
 
 def _compute_collection_bounds(scene: Any, export_collection: str = "COL_Export") -> dict[str, Any]:
@@ -2225,9 +2232,28 @@ def audit_geometry_anomalies(scene: Any, *, export_collection: str = "COL_Export
 
 def _setup_studio_lights_and_world(scene: Any, bounds: dict[str, Any], *, mode: str = "lookdev", studio_collection: str = "COL_Studio") -> None:
     col = get_or_create_collection(scene, studio_collection)
-    for obj in list(col.objects):
-        if obj.type in ("LIGHT", "CAMERA") or obj.name.startswith(("LGT_Studio_", "CAM_Studio_", "SM_Studio_")):
+    # Purge ALL studio backdrops/walls, rogue scene lights, and custom lookdev cameras so nothing blocks studio framing or overexposes renders
+    for obj in list(scene.objects):
+        if (
+            obj.type == "LIGHT"
+            or _is_studio_object(obj)
+            or (obj.type == "CAMERA" and obj.name.startswith(("CAM_Studio_", "CAM_Look", "look_p")))
+        ):
             bpy.data.objects.remove(obj, do_unlink=True)
+    for c in list(bpy.data.collections):
+        if (
+            c.name != studio_collection
+            and c.name not in ("COL_Export", "COL_Rig")
+            and "studio" in c.name.lower()
+            and len(c.objects) == 0
+            and len(c.children) == 0
+        ):
+            try:
+                if c.name in scene.collection.children:
+                    scene.collection.children.unlink(c)
+                bpy.data.collections.remove(c)
+            except Exception:
+                pass
 
     # Pro lookdev studio world: Light Path Is Camera Ray decouples clean neutral backdrop from controlled ambient lighting!
     world = scene.world or bpy.data.worlds.new("WLD_Studio")
@@ -2643,15 +2669,23 @@ def export_and_verify_glb(
     bpy.ops.object.select_all(action="DESELECT")
     selected = []
     selected_meshes = []
+    seen_sel: set[str] = set()
     for cname in (export_collection, rig_collection):
         col = bpy.data.collections.get(cname)
         if col:
             for obj in col.all_objects:
                 if obj.type in ("MESH", "ARMATURE") and not obj.hide_render and not _is_studio_object(obj):
-                    obj.select_set(True)
-                    selected.append(obj.name)
-                    if obj.type == "MESH":
-                        selected_meshes.append(obj.name)
+                    if obj.name not in seen_sel:
+                        obj.select_set(True)
+                        seen_sel.add(obj.name)
+                        selected.append(obj.name)
+                        if obj.type == "MESH":
+                            selected_meshes.append(obj.name)
+    for obj in scene.objects:
+        if obj.type == "ARMATURE" and not obj.hide_render and not _is_studio_object(obj) and obj.name not in seen_sel:
+            obj.select_set(True)
+            seen_sel.add(obj.name)
+            selected.append(obj.name)
 
     if not selected_meshes:
         return {
