@@ -1,5 +1,7 @@
 # GPT-supervised Blender production
 
+For Qwen-only, reference-guided character production under independent Claude review, use the separate [V3 CLI](harness-v3.md). The following instructions describe the legacy workflow.
+
 The runner uses GPT for the design brief and bounded repair work orders, Qwen for asset-specific Blender Python, and a separate GPT session for image review. OpenCode sessions use isolated configuration and fresh context. The harness validates and executes Qwen's scripts through Blender MCP. Stage review and the frozen 100-point final rubric retain their original thresholds.
 
 ## Preflight and foreground execution

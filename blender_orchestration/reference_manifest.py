@@ -73,15 +73,19 @@ class ReferenceEntry:
     sha256: str
     width: int = 0
     height: int = 0
+    purpose: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "path": str(self.path),
             "role": self.role,
             "sha256": self.sha256,
             "width": self.width,
             "height": self.height,
         }
+        if self.purpose:
+            data["purpose"] = self.purpose
+        return data
 
 
 @dataclass
@@ -240,9 +244,10 @@ def build_manifest_from_directory(
         primary_path = primary_resolved
     else:
         primary_path = images[0]
+    ordered = [primary_path, *(path for path in images if path != primary_path)]
     entries = [
         build_entry(path, ROLE_PRIMARY if path == primary_path else ROLE_SUPPLEMENTARY)
-        for path in images
+        for path in ordered
     ]
     manifest = ReferenceManifest(asset=asset, entries=entries, path=None)
     validate_manifest(manifest)
@@ -288,7 +293,7 @@ def load_reference_manifest(path: Path) -> ReferenceManifest:
                 f"cannot be verified, so a hash mismatch cannot be excluded"
             )
         actual = _sha256(resolved)
-        if recorded and recorded != actual:
+        if recorded != actual:
             raise ReferenceManifestError(
                 f"reference hash mismatch for {resolved}: manifest {recorded}, actual {actual}"
             )
@@ -300,6 +305,7 @@ def load_reference_manifest(path: Path) -> ReferenceManifest:
                 sha256=actual,
                 width=width,
                 height=height,
+                purpose=str(record.get("purpose") or ""),
             )
         )
     manifest = ReferenceManifest(
@@ -326,6 +332,8 @@ def snapshot_references(
     validate_manifest(manifest)
     dest_dir = Path(dest_dir)
     sources = manifest.all_paths()
+    if len({p.name for p in sources}) != len(sources):
+        raise ReferenceManifestError('snapshot requires unique reference filenames')
     # Verify every source hash before copying a single byte.
     for entry in manifest.entries:
         source = Path(entry.path)
@@ -355,6 +363,7 @@ def snapshot_references(
                 sha256=copied_hash,
                 width=entry.width,
                 height=entry.height,
+                purpose=entry.purpose,
             )
         )
     # Preserve primary-first ordering in the returned paths.
@@ -373,3 +382,119 @@ def snapshot_references(
     write_reference_manifest(snapshot_manifest, dest_dir / manifest_name)
     snapshot_manifest.path = dest_dir / manifest_name
     return snapshot_paths, snapshot_manifest
+
+
+# ---------------------------------------------------------------------------
+# V3 additions: integrity, purposes, overlap detection, bounded review copies
+# ---------------------------------------------------------------------------
+
+def verify_image_integrity(path: Path) -> Tuple[int, int]:
+    """Fully decode ``path``; raise ReferenceManifestError when it is truncated or not an image."""
+    try:
+        from PIL import Image  # type: ignore
+    except Exception as exc:  # pragma: no cover - Pillow is a hard dependency of the harness
+        raise ReferenceManifestError("Pillow is required to validate reference images") from exc
+    try:
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            image.load()
+            return (int(image.width), int(image.height))
+    except Exception as exc:
+        raise ReferenceManifestError(f"reference image is corrupt or unreadable: {path}: {exc}") from exc
+
+
+def _thumb(path: Path, box: Optional[Tuple[float, float, float, float]] = None, size: int = 48):
+    from PIL import Image  # type: ignore
+
+    with Image.open(path) as image:
+        image = image.convert("L")
+        if box:
+            w, h = image.size
+            image = image.crop((int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h)))
+        image = image.resize((size, size))
+        return list(image.getdata())
+
+
+def _correlation(a: List[int], b: List[int]) -> float:
+    n = len(a)
+    ma, mb = sum(a) / n, sum(b) / n
+    num = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+    da = sum((x - ma) ** 2 for x in a) ** 0.5
+    db = sum((y - mb) ** 2 for y in b) ** 0.5
+    return num / (da * db) if da and db else 0.0
+
+
+_CROP_BOXES = {
+    "full": (0.0, 0.0, 1.0, 1.0), "left_half": (0.0, 0.0, 0.5, 1.0), "right_half": (0.5, 0.0, 1.0, 1.0),
+    "top_half": (0.0, 0.0, 1.0, 0.5), "bottom_half": (0.0, 0.5, 1.0, 1.0),
+}
+
+
+def detect_reference_overlaps(entries: Sequence[ReferenceEntry], threshold: float = 0.88) -> List[Dict[str, Any]]:
+    """Report references whose content is (a crop of) another reference, so duplicated
+    information is documented instead of being weighted twice."""
+    found: List[Dict[str, Any]] = []
+    for small in entries:
+        small_thumb = _thumb(Path(small.path))
+        for large in entries:
+            if large is small or (large.width * large.height) < (small.width * small.height):
+                continue
+            for region, box in _CROP_BOXES.items():
+                corr = _correlation(small_thumb, _thumb(Path(large.path), box))
+                if corr >= threshold:
+                    found.append({"image": Path(small.path).name, "contained_in": Path(large.path).name,
+                                  "region": region, "correlation": round(corr, 3)})
+                    break
+    return found
+
+
+def build_manifest_with_primary(
+    directory: Path,
+    primary_name: str,
+    *,
+    asset: str = "",
+    purposes: Optional[Dict[str, str]] = None,
+    out_path: Optional[Path] = None,
+) -> ReferenceManifest:
+    """Discover every image, verify that each decodes, assign the named primary, and record
+    purposes. The manifest is written to ``out_path`` (never into the reference directory)."""
+    images = discover_reference_images(directory)
+    by_name = {p.name: p for p in images}
+    if primary_name not in by_name:
+        raise ReferenceManifestError(f"primary reference {primary_name!r} not found among {sorted(by_name)}")
+    ordered = [by_name[primary_name]] + [p for p in images if p.name != primary_name]
+    entries: List[ReferenceEntry] = []
+    for path in ordered:
+        width, height = verify_image_integrity(path)
+        entries.append(ReferenceEntry(
+            path=path.resolve(), role=ROLE_PRIMARY if path.name == primary_name else ROLE_SUPPLEMENTARY,
+            sha256=_sha256(path), width=width, height=height, purpose=(purposes or {}).get(path.name, ""),
+        ))
+    manifest = validate_manifest(ReferenceManifest(asset=asset, entries=entries))
+    if out_path is not None:
+        manifest.path = write_reference_manifest(manifest, Path(out_path))
+    return manifest
+
+
+def make_review_copies(manifest: ReferenceManifest, dest_dir: Path, max_side: int = 1280) -> List[Dict[str, Any]]:
+    """Bounded JPEG copies for model attachments (keeps image payloads small). Each copy records
+    the SHA-256 of its source so provenance stays traceable to the approved original."""
+    from PIL import Image  # type: ignore
+
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    out: List[Dict[str, Any]] = []
+    for idx, entry in enumerate(manifest.entries):
+        src = Path(entry.path)
+        if _sha256(src) != entry.sha256:
+            raise ReferenceManifestError(f"reference changed since manifest creation: {src}")
+        target = dest_dir / f"ref{idx + 1}_{entry.role}_{src.name.split('.')[0]}.jpg"
+        with Image.open(src) as image:
+            image = image.convert("RGB")
+            image.thumbnail((max_side, max_side))
+            image.save(target, "JPEG", quality=90)
+        out.append({"source": str(src), "source_sha256": entry.sha256, "role": entry.role,
+                    "purpose": entry.purpose, "review_copy": str(target), "copy_sha256": _sha256(target),
+                    "copy_size": list(Image.open(target).size)})
+    return out

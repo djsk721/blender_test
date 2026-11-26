@@ -1,0 +1,69 @@
+PRODUCTION_GOAL
+
+Create a high-quality, recognizable, fully modeled 3D representation of Princess Zelda from The Legend of Zelda: Breath of the Wild, faithfully following the character reference images stored in `references/zelda/`.
+
+Primary objective:
+
+Achieve strong visual likeness to the supplied Zelda references while producing a technically valid, Blender-editable, game-ready character asset.
+
+Target characteristics:
+
+- Full-body stylized fantasy female character.
+- Approximate production scale of 1.70 meters, used only as an internal game-asset scale reference.
+- Faithful head-to-body proportions based on the reference images.
+- Recognizable Princess Zelda facial features.
+- Natural facial contours rather than generic primitive-based anime facial geometry.
+- Correct eye placement, eye shape, and facial feature depth.
+- Pointed Hylian ears with appropriate size, curvature, and position.
+- Golden-blonde hair matching the reference hairstyle, with carefully modeled hair masses, front sections, and side/back silhouettes.
+- Blue and ivory Breath of the Wild fieldwork clothing, following the authoritative costume references.
+- Correct bodice, sleeves, neckline, belt, pouch, trousers, gloves, and boots where supported by the references.
+- Faithful color palette.
+- Distinct materials for skin, hair, fabric, leather, and metal.
+- Appropriate fine details and costume decoration.
+- Consistent anatomical proportions.
+- No floating or incorrectly embedded facial parts.
+- No visibly broken hands or oversized accessories.
+- No severe mesh intersections or disconnected costume components.
+- No generic placeholder geometry in the final approved result.
+
+Modeling requirements:
+
+- Qwen must perform all asset-specific 3D modeling.
+- Use Blender MCP as the real production tool.
+- Use `REFERENCE_GUIDED` with the full reference set.
+- Prefer genuine Blender-authored geometry over external AI 3D generators.
+- Use a neutral modeling pose suitable for later rigging.
+- Preserve clean geometry and a practical topology for a game character.
+- Produce actual Blender renders for visual inspection.
+
+Quality priorities, in order:
+
+1. Facial likeness.
+2. Overall silhouette and anatomy.
+3. Hairstyle accuracy.
+4. Costume silhouette and construction.
+5. Hands, boots, and accessory structure.
+6. Materials and surface detail.
+7. Rigging and animation readiness.
+
+The character must not be considered complete simply because a Blender script executed successfully.
+
+The modeling stage must pass independent visual QA before rigging and animation begin.
+
+After modeling approval, prepare the character for rigging and validate basic idle, walk, and run animations if supported by the actual production workflow.
+
+Final deliverables:
+
+- Editable `.blend` file.
+- Approved `.glb` export.
+- Front, side, back, and three-quarter renders.
+- Facial close-up renders.
+- Reference comparison sheets.
+- Independent QA reports.
+- Verified checkpoints.
+- Execution evidence and production metadata.
+
+This character is being produced as a controlled reference-guided modeling and harness-quality validation test.
+
+END_PRODUCTION_GOAL
