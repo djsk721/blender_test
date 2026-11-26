@@ -152,6 +152,7 @@ python3 -m unittest -v tests/blender_mcp/test_integration_qa.py
 Latest verified measurements and exit codes are recorded in [docs/qa-report.md](docs/qa-report.md).
 
 Additional orchestration & policy documentation:
+- [docs/supervised-production.md](docs/supervised-production.md) — GPT-directed Qwen production, dependency preflight, and checkpoint resume
 - [docs/orchestration-architecture.md](docs/orchestration-architecture.md) — Blender Director routing, Skill Execution Contracts, Blender-Only policy (`TEXT_ONLY` / `REFERENCE_GUIDED`), MCP tool adaptation, and workflow examples
 - [docs/upstream-skills-audit.md](docs/upstream-skills-audit.md) — Audit comparing upstream `arjun988/blender-skills` against the local `.opencode/skills/` pack and live `mcp-for-blender` schemas
 - [docs/benchmark-policy.md](docs/benchmark-policy.md) — Benchmark reference policy resolution and preflight CLI usage
