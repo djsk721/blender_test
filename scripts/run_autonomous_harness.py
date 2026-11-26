@@ -43,6 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--reference-mode", choices=["TEXT_ONLY", "REFERENCE_GUIDED"], default="REFERENCE_GUIDED")
     parser.add_argument("--reference-image", type=Path, default=PROJECT_ROOT / "images.jpg")
+    parser.add_argument(
+        "--reference-manifest",
+        type=Path,
+        default=None,
+        help="Multi-reference manifest JSON (blender_mcp.reference_manifest.v1). Its primary entry "
+        "must agree with --reference-image; every entry is delivered to all agents.",
+    )
     parser.add_argument("--animation-mode", choices=["static", "rigged", "animated"], default="animated")
     parser.add_argument("--producer-model-id", "--model-id", default=QWEN_FLASH_NEXT_MODEL_ID)
     parser.add_argument("--supervisor-model-id", default=DEFAULT_LIGHT_MODEL_ID)
@@ -99,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
             asset_name=args.asset_name,
             reference_mode=args.reference_mode,
             approved_reference_path=args.reference_image if args.reference_mode == "REFERENCE_GUIDED" else None,
+            reference_manifest=args.reference_manifest if args.reference_mode == "REFERENCE_GUIDED" else None,
             animation_mode=args.animation_mode,
             geometry_strategy=args.geometry_strategy,
             base_mesh_manifest=args.base_mesh_manifest,

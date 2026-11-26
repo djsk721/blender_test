@@ -9,9 +9,17 @@ color assignment counting as texture baking.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 from typing import Any
 
 from .visual_qa import verify_visual_review_evidence
+
+
+class ReferenceMode(str, Enum):
+    """How the approved reference image drives production."""
+
+    REFERENCE_GUIDED = "REFERENCE_GUIDED"
+    TEXT_ONLY = "TEXT_ONLY"
 
 SKILL_STATUSES = (
     "PENDING",

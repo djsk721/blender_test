@@ -56,6 +56,11 @@ class QuotaBlockedError(RuntimeError):
 from .sequential_benchmark import BlenderSessionResetter
 from .skill_registry import BlenderDirector, SkillRegistry
 from .visual_qa import hash_file_sha256
+from .reference_manifest import (
+    ReferenceManifest,
+    load_reference_manifest,
+    snapshot_references,
+)
 
 _PY_FENCE_RE = re.compile(r"```(?:python|py)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -812,12 +817,13 @@ class AutonomousBlenderHarness:
 
     def run_production(
         self,
-        *,
         prompt: str,
+        *,
         run_dir: Path,
         asset_name: str = "HeroineCharacter",
         reference_mode: str = "REFERENCE_GUIDED",
         approved_reference_path: Path | None = None,
+        reference_manifest: Path | None = None,
         animation_mode: str = "animated",
         geometry_strategy: str = "FROM_SCRATCH",
         base_mesh_manifest: Path | None = None,
@@ -829,6 +835,7 @@ class AutonomousBlenderHarness:
     ) -> dict[str, Any]:
         """Run one complete autonomous production cycle from a clean Blender session."""
         t0 = time.monotonic()
+        reference_mode = str(getattr(reference_mode, "value", reference_mode))
         if not re.fullmatch(r"[A-Za-z0-9_-]+", asset_name):
             raise ValueError("Asset name must contain only letters, digits, underscores and hyphens.")
         verify_model_id_lock(self.model_id, self.expected_model_id)
@@ -851,11 +858,54 @@ class AutonomousBlenderHarness:
 
         run_dir = Path(run_dir).resolve()
         ref_file = Path(approved_reference_path).resolve() if reference_mode == "REFERENCE_GUIDED" and approved_reference_path else None
+        manifest: ReferenceManifest | None = None
+        if reference_manifest is not None:
+            try:
+                manifest = load_reference_manifest(Path(reference_manifest))
+            except (FileNotFoundError, ValueError) as exc:
+                raise ValueError(
+                    f"Cannot load the primary reference manifest: {exc}"
+                ) from exc
+            if reference_mode == "REFERENCE_GUIDED":
+                primary = manifest.primary
+                if ref_file is None:
+                    ref_file = primary.path.resolve()
+                elif ref_file != primary.path.resolve():
+                    raise ValueError(
+                        "The approved reference image is not the manifest's primary reference: "
+                        f"{ref_file} vs {primary.path}"
+                    )
         if reference_mode == "REFERENCE_GUIDED" and (ref_file is None or not ref_file.is_file()):
-            raise ValueError("REFERENCE_GUIDED production requires the approved reference image.")
+            raise ValueError(
+                "REFERENCE_GUIDED production requires the approved primary reference image."
+            )
+        if manifest is not None:
+            if ref_file is None or manifest.primary.sha256 != hash_file_sha256(ref_file):
+                raise ValueError(
+                    "The primary reference hash in the manifest does not match "
+                    "the approved reference image."
+                )
+            for ref in manifest.entries:
+                if not ref.path.is_file():
+                    raise ValueError(
+                        f"The primary reference manifest lists a missing file: {ref.path}"
+                    )
+        ref_files = manifest.all_paths() if manifest is not None else ([ref_file] if ref_file else [])
+        if manifest is not None:
+            ref_block = manifest.prompt_block()
+        elif ref_file is not None:
+            ref_block = (
+                "\nReference image (approved, sha256 "
+                f"{hash_file_sha256(ref_file)[:16]}...): {ref_file}\n"
+            )
+        else:
+            ref_block = ""
+        self._reference_manifest = manifest
         goal = {
             "prompt": prompt, "asset_name": asset_name, "reference_mode": reference_mode,
             "reference_sha256": hash_file_sha256(ref_file) if ref_file else None,
+            "reference_manifest": manifest.to_dict() if manifest else None,
+            "reference_count": len(manifest.entries) if manifest else (1 if ref_file else 0),
             "geometry_strategy": geometry_strategy, "animation_mode": animation_mode,
             "base_mesh_sha256": base_mesh_prov["sha256"] if base_mesh_prov else None,
             "extra_guidance": extra_guidance,
@@ -884,6 +934,11 @@ class AutonomousBlenderHarness:
         final_dir = run_dir / "final"
         for d in (run_dir, handoffs_dir, scripts_dir, checkpoints_dir, renders_dir, reviews_dir, final_dir):
             d.mkdir(parents=True, exist_ok=True)
+        if manifest is not None:
+            _, manifest = snapshot_references(manifest, run_dir / "references" / "zelda")
+            self._reference_manifest = manifest
+            ref_files = manifest.all_paths()
+            ref_block = manifest.prompt_block()
 
         resetter = BlenderSessionResetter(
             project_root=self.project_root,
@@ -996,7 +1051,7 @@ class AutonomousBlenderHarness:
             s1_resp = self._invoke_agent(
                 self.model_roles["supervisor"],
                 s1_prompt,
-                files=[ref_file] if ref_file else None,
+                files=ref_files or None,
                 timeout_sec=self.stage_timeout_sec,
                 title="Stage 1 Art Director Spec",
             )
@@ -1163,6 +1218,7 @@ class AutonomousBlenderHarness:
                             f"1) Load approved base mesh {base_obj_choice!r} via `bmo.verify_and_load_base_mesh(scene, BASE_MESH_MANIFEST, {base_obj_choice!r}, target_height_m=1.65, collection=col_export, new_name='SM_BaseBody')`.",
                             f"2) Inspect regions and apply semantic stylization `bmo.apply_semantic_stylization(body_obj, {sem_ctrls})` matching the reference silhouette, face proportions, jaw/chin taper, larger stylized eyes, and pointed elven ears.",
                             "3) Add subtle sculpted 3D upper/lower eyelid rims and arched brows hugging `eye_L`/`eye_R` landmarks if needed for expressive readable eyes in clay renders, and verify `min_z ≈ 0.0`.",
+                            ref_block.strip(),
                             api_cheatsheet,
                             "Loaded Skills:\n" + s2_skill_ctx,
                             "Design Spec:\n" + spec_compact,
@@ -1191,6 +1247,7 @@ class AutonomousBlenderHarness:
                             "  4. Use a graceful, natural, balanced grounded stance (BOTH feet firmly on `z = 0.0` in a subtle contrapposto/step — NEVER an awkward high sideways flamingo leg lift!).",
                             "  5. Shape torso/bodice/waist panels smoothly conforming to the ribcage silhouette (NEVER oversized flat oval surfboards!), and anchor any held prop directly to `arm_res['joints']['palm_center']` so opposing thumb+fingers wrap its edge.",
                             "- Keep object count clean (~15-35 cohesive `SM_*` meshes in `col_export`, joining repeated sub-parts via `bt.join_objects`).",
+                            ref_block.strip(),
                             api_cheatsheet,
                             "Loaded Skills:\n" + s2_skill_ctx,
                             "Design Specification:\n" + spec_compact,
@@ -1203,7 +1260,7 @@ class AutonomousBlenderHarness:
                     stage_label="stage_02_blockout",
                     user_prompt=prompt,
                     agent_prompt=s2_prompt,
-                    attach_files=[ref_file] if ref_file else None,
+                    attach_files=ref_files or None,
                     telemetry=agent_telemetry,
                     producer_sessions=producer_sessions,
                     scripts_dir=scripts_dir,
@@ -1964,6 +2021,7 @@ class AutonomousBlenderHarness:
                 producer_session_ids=producer_sessions,
                 reference_mode=reference_mode,
                 approved_reference_path=ref_file,
+                additional_references=[p for p in ref_files if p != ref_file] or None,
                 frozen_design_spec=design_spec_md,
                 technical_gates_passed=all_tech_ok,
             )

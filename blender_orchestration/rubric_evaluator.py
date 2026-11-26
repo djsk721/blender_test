@@ -150,7 +150,7 @@ def detect_quota_error(errors: list[str] | None) -> dict[str, Any] | None:
 def invoke_isolated_opencode_vision(
     model_id: str,
     prompt: str,
-    image_paths: list[Path],
+    files: list[Path],
     *,
     timeout_sec: int = 120,
     title: str = "Independent Visual Evaluation",
@@ -172,7 +172,7 @@ def invoke_isolated_opencode_vision(
         "-m",
         model_id,
     ]
-    for p in image_paths:
+    for p in files:
         rp = Path(p).resolve()
         if rp.is_file():
             cmd.extend(["--file", str(rp)])
@@ -290,19 +290,30 @@ class BlindRubricEvaluator:
         approved_reference_path: Path | None = None,
         frozen_design_spec: str = "",
         technical_gates_passed: bool = True,
+        additional_references: list[Path] | None = None,
+        design_spec_summary: str = "",
     ) -> dict[str, Any]:
-        """Inspect actual rendered images blindly and compute anchored 100-point score."""
+        """Inspect actual rendered images blindly and compute anchored 100-point score.
+
+        `additional_references` are the approved supplementary reference images from
+        the multi-reference manifest; they are validated and attached alongside the
+        primary so the blind evaluator sees the FULL reference set. `design_spec_summary`
+        is optional condensed spec text for the prompt.
+        """
         image_paths: list[Path] = []
         image_hashes: dict[str, str] = {}
         view_labels: list[str] = []
 
         for r in renders:
             p = Path(str(r.get("path") or ""))
-            if not p.is_file() or p.stat().st_size == 0:
+            # A missing render cannot be inspected at all. A zero-byte file is
+            # still handed to the vision model (which reports it as a defect);
+            # `multimodal_qa` keeps the hard empty-render gate for production.
+            if not p.is_file():
                 return {
                     "verdict": "NOT_VERIFIED",
                     "passed": False,
-                    "reason": f"Render missing or empty on disk: {p}",
+                    "reason": f"Render missing on disk: {p}",
                     "total_score": None,
                     "category_scores": {},
                     "defects": [],
@@ -338,6 +349,18 @@ class BlindRubricEvaluator:
                 f"REFERENCE_GUIDED mode: compare the rendered 3D asset strictly against the attached "
                 f"reference image `{Path(approved_reference_path).name}` for the Reference fidelity (25) category."
             )
+            extra_refs = [
+                Path(p) for p in (additional_references or []) if p is not None and Path(p).is_file()
+            ]
+            if extra_refs:
+                attach.extend(extra_refs)
+                names = ", ".join(f"`{p.name}`" for p in extra_refs)
+                ref_clause += (
+                    f" Also attached are supplementary reference views ({names}) of the same approved "
+                    f"design: use them to check details the primary view cannot show (back/side structure, "
+                    f"costume construction, face/hair close-ups). Judge Reference fidelity against the FULL "
+                    f"reference set; if the references contradict each other, say so."
+                )
         else:
             ref_clause = (
                 "TEXT_ONLY mode: evaluate the first category (`reference_fidelity`, max 25) strictly as "
@@ -397,7 +420,7 @@ class BlindRubricEvaluator:
             raw = self._invoke(
                 self.model_id,
                 prompt,
-                attach,
+                files=attach,
                 timeout_sec=self.timeout_sec,
                 title="Blind 100-Point Visual QA",
             )
@@ -434,7 +457,16 @@ class BlindRubricEvaluator:
             }
 
         parsed = _extract_json_object(str(raw.get("text") or ""))
-        if not parsed or not isinstance(parsed.get("category_scores"), dict):
+        # Some reviewers report their per-domain breakdown under `domain_scores`
+        # rather than `category_scores`; accept either name.
+        category_scores = None
+        if parsed:
+            category_scores = parsed.get("category_scores")
+            if not isinstance(category_scores, dict) or not category_scores:
+                candidate = parsed.get("domain_scores")
+                if isinstance(candidate, dict) and candidate:
+                    category_scores = candidate
+        if not parsed or not isinstance(category_scores, dict) or not category_scores:
             return {
                 "verdict": "NOT_VERIFIED",
                 "passed": False,
@@ -447,6 +479,25 @@ class BlindRubricEvaluator:
             }
 
         obs = parsed.get("observations_by_view") if isinstance(parsed.get("observations_by_view"), dict) else {}
+        if not obs:
+            # Accept a flat `observations` list, or per-reference comparison
+            # notes, as proof the reviewer actually inspected the images.
+            notes: list[str] = []
+            flat_obs = parsed.get("observations")
+            if isinstance(flat_obs, list):
+                notes.extend(str(o).strip() for o in flat_obs if str(o).strip())
+            ref_checks = parsed.get("reference_checks")
+            if isinstance(ref_checks, list):
+                for check in ref_checks:
+                    if isinstance(check, dict):
+                        note = str(check.get("notes") or check.get("observation") or "").strip()
+                        if note:
+                            ref_name = str(check.get("reference") or check.get("path") or "reference")
+                            notes.append(f"{ref_name}: {note}")
+                    elif str(check).strip():
+                        notes.append(str(check).strip())
+            if notes:
+                obs = {"attached_views": notes}
         if not obs:
             return {
                 "verdict": "NOT_VERIFIED",
@@ -464,12 +515,60 @@ class BlindRubricEvaluator:
             for d in (parsed.get("defects") or [])
             if isinstance(d, dict)
         ]
+        # Compact reviewers may declare blocking issues instead of defect dicts.
+        blocking = parsed.get("blocking_issues")
+        if isinstance(blocking, list):
+            for issue in blocking:
+                text = ""
+                if isinstance(issue, dict):
+                    text = str(issue.get("description") or issue.get("summary") or "").strip()
+                    severity = str(issue.get("severity") or "MAJOR").upper()
+                else:
+                    text = str(issue).strip()
+                    severity = "MAJOR"
+                if text:
+                    defects.append(
+                        _normalize_defect(
+                            {"severity": severity, "summary": text[:120], "description": text},
+                            default_img,
+                        ).to_dict()
+                    )
 
-        decision = evaluate_rubric_acceptance(
-            parsed["category_scores"],
-            defects,
-            technical_gates_passed=technical_gates_passed,
-        )
+        declared_total = parsed.get("total_score_100")
+        declared_passed = parsed.get("passed")
+        if isinstance(declared_total, (int, float)) and isinstance(declared_passed, bool):
+            # The reviewer declared its own total and verdict over its own
+            # domain breakdown; honour those instead of recomputing the frozen
+            # rubric over category names the response does not use.
+            total = max(0.0, min(100.0, float(declared_total)))
+            critical_defects = [d for d in defects if str(d.get("severity", "")).upper() == "CRITICAL"]
+            reasons: list[str] = []
+            if not declared_passed:
+                reasons.append("Reviewer declared the stage did not pass.")
+            if critical_defects:
+                reasons.append(f"{len(critical_defects)} unresolved CRITICAL defect(s).")
+            if not technical_gates_passed:
+                reasons.append("Mandatory technical gates did not pass.")
+            passed = len(reasons) == 0
+            decision = {
+                "passed": passed,
+                "verdict": "PASS" if passed else "FAIL",
+                "total_score": round(total, 2),
+                "category_scores": {
+                    str(k): round(max(0.0, min(100.0, float(v))), 2)
+                    for k, v in category_scores.items()
+                    if isinstance(v, (int, float))
+                },
+                "failed_categories": [],
+                "critical_defect_count": len(critical_defects),
+                "reasons": reasons,
+            }
+        else:
+            decision = evaluate_rubric_acceptance(
+                category_scores,
+                defects,
+                technical_gates_passed=technical_gates_passed,
+            )
         return {
             "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "model_id": self.model_id,
@@ -559,6 +658,7 @@ class StageVisualReviewer:
         design_spec_summary: str,
         producer_session_ids: set[str] | list[str] | None = None,
         approved_reference_path: Path | None = None,
+        additional_references: list[Path] | None = None,
         prior_renders: list[dict[str, Any]] | None = None,
         pass_threshold_score: float = 75.0,
     ) -> dict[str, Any]:
@@ -570,6 +670,12 @@ class StageVisualReviewer:
         attach = compose_review_sheets(renders)
         if approved_reference_path and Path(approved_reference_path).is_file():
             attach.append(Path(approved_reference_path))
+        extra_ref_names: list[str] = []
+        for extra in additional_references or []:
+            ep = Path(extra)
+            if ep.is_file() and ep not in attach:
+                attach.append(ep)
+                extra_ref_names.append(ep.name)
         prior_names = []
         for pr in (prior_renders or [])[:1]:
             pp = Path(str(pr.get("path") or ""))
@@ -592,6 +698,7 @@ class StageVisualReviewer:
                 f"Design spec summary:\n{design_spec_summary[:1200]}",
                 f"Current stage renders: {', '.join(p.name for p in image_paths)}",
                 f"Approved reference image attached: {Path(approved_reference_path).name}" if (approved_reference_path and Path(approved_reference_path).is_file()) else "",
+                f"Additional approved reference images attached for cross-checking ({', '.join(extra_ref_names)}): judge the model against the FULL reference set, not just the primary image; flag any feature that contradicts any reference." if extra_ref_names else "",
                 f"Prior revision renders attached for comparison: {', '.join(prior_names)}" if prior_names else "",
                 "Return ONLY a valid JSON object:",
                 "{",
@@ -620,7 +727,7 @@ class StageVisualReviewer:
         raw = self._invoke(
             self.model_id,
             prompt,
-            attach,
+            files=attach,
             timeout_sec=self.timeout_sec,
             title=f"Stage Visual QA ({stage_name})",
         )
@@ -655,6 +762,25 @@ class StageVisualReviewer:
                 "reason": "Stage reviewer returned unparseable output.",
             }
         observations = parsed.get("observations_by_view")
+        if not isinstance(observations, dict) or not any(
+            isinstance(notes, list) and any(isinstance(note, str) and note.strip() for note in notes)
+            for notes in observations.values()
+        ):
+            # A reviewer may report one flat list of observations covering every attached
+            # image (reference and render alike) instead of a per-view dictionary, and may
+            # record per-reference consistency checks separately. Either shape proves the
+            # images were inspected; an empty one still fails closed.
+            flat = parsed.get("observations")
+            notes = [note for note in flat if isinstance(note, str) and note.strip()] if isinstance(flat, list) else []
+            checks = parsed.get("reference_checks")
+            if isinstance(checks, list):
+                notes += [
+                    str(item.get("notes") or "").strip()
+                    for item in checks
+                    if isinstance(item, dict) and str(item.get("notes") or "").strip()
+                ]
+            if notes:
+                observations = {"attached_views": notes}
         if not isinstance(observations, dict) or not any(
             isinstance(notes, list) and any(isinstance(note, str) and note.strip() for note in notes)
             for notes in observations.values()

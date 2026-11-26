@@ -66,6 +66,47 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _clip(value: Any, limit: int = 500) -> str:
+    """Coerce to a trimmed string clipped to `limit` characters."""
+    text = value if isinstance(value, str) else ("" if value is None else str(value))
+    text = text.strip()
+    return text[:limit]
+
+
+def _normalise_reference_checks(raw: Any) -> list[dict[str, Any]]:
+    """Normalise a reviewer's per-reference check list.
+
+    Keeps only well-formed entries (a dict naming the attached reference file),
+    clips long strings, and coerces ``checks_performed`` to a list of strings.
+    Anything that is not a list of such dicts yields an empty list, so a missing
+    or malformed field never raises.
+    """
+    if not isinstance(raw, list):
+        return []
+    checks: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        reference_file = _clip(entry.get("reference_file"), 200)
+        if not reference_file:
+            continue
+        performed = entry.get("checks_performed")
+        if isinstance(performed, list):
+            performed = [_clip(item, 200) for item in performed if _clip(item)]
+        else:
+            performed = [_clip(performed, 200)] if _clip(performed) else []
+        checks.append(
+            {
+                "reference_file": reference_file,
+                "role": _clip(entry.get("role"), 40),
+                "checks_performed": performed,
+                "match": _clip(entry.get("match"), 20),
+                "notes": _clip(entry.get("notes"), 500),
+            }
+        )
+    return checks
+
+
 def parse_opencode_json_events(stdout_text: str) -> dict[str, Any]:
     """Parse OpenCode `--format json` JSONL stream into session metadata & final assistant text."""
     session_id = ""
@@ -181,10 +222,17 @@ class IndependentMultimodalReviewer:
         policy_digest: str,
         scene_audit: dict[str, Any] | None = None,
         approved_reference_path: Path | None = None,
+        additional_references: list[Path] | None = None,
         prior_renders: list[dict[str, Any]] | None = None,
         text_specification: str = "",
     ) -> dict[str, Any]:
-        """Inspect actual rendered PNG files and return verified VisualReviewEvidence + 7-domain verdicts."""
+        """Inspect actual rendered PNG files and return verified VisualReviewEvidence + 7-domain verdicts.
+
+        `approved_reference_path` is the PRIMARY reference (its hash is recorded in
+        the evidence chain); `additional_references` are supplementary approved
+        references attached alongside it so every approved reference reaches the
+        reviewer.
+        """
         image_files: list[Path] = []
         render_meta_by_path: dict[str, dict[str, Any]] = {}
         for r in renders:
@@ -217,6 +265,7 @@ class IndependentMultimodalReviewer:
 
         attach_files = list(image_files)
         ref_hash: str | None = None
+        supplementary_refs: list[Path] = []
         if profile.reference_mode == "REFERENCE_GUIDED":
             if approved_reference_path is None or not approved_reference_path.is_file():
                 return {
@@ -227,6 +276,20 @@ class IndependentMultimodalReviewer:
                 }
             ref_hash = hash_file_sha256(approved_reference_path)
             attach_files.append(approved_reference_path)
+            primary_resolved = approved_reference_path.resolve()
+            for extra in additional_references or []:
+                extra_path = Path(extra)
+                if not extra_path.is_file():
+                    return {
+                        "status": "NOT_VERIFIED",
+                        "reason": f"Supplementary reference image missing on disk: {extra_path}",
+                        "review_evidence": None,
+                        "domain_verdicts": {d: "NOT_VERIFIED" for d in SEVEN_QA_DOMAINS},
+                    }
+                if extra_path.resolve() == primary_resolved:
+                    continue
+                supplementary_refs.append(extra_path)
+                attach_files.append(extra_path)
 
         prior_files: list[Path] = []
         for pr in (prior_renders or []):
@@ -241,6 +304,7 @@ class IndependentMultimodalReviewer:
             approved_reference_path=approved_reference_path,
             prior_files=prior_files,
             text_specification=text_specification,
+            additional_references=supplementary_refs,
         )
 
         try:
@@ -435,6 +499,7 @@ class IndependentMultimodalReviewer:
             "reviewer_session_id": reviewer_ctx,
             "review_evidence": evidence,
             "domain_verdicts": domain_verdicts,
+            "reference_checks": _normalise_reference_checks(parsed_json.get("reference_checks")),
             "before_after_improvement": parsed_json.get("before_after_improvement"),
             "technical_analysis": tech_analysis,
         }
@@ -447,11 +512,25 @@ class IndependentMultimodalReviewer:
         approved_reference_path: Path | None,
         prior_files: list[Path],
         text_specification: str,
+        additional_references: list[Path] | None = None,
     ) -> str:
         view_list = [f"{r.get('view', 'unknown')}: {Path(str(r.get('path'))).name}" for r in renders]
         crit_list = [f"- {c.criterion_id}: {c.description}" for c in profile.criteria]
+        extra_note = ""
+        if additional_references:
+            names = ", ".join(p.name for p in additional_references)
+            extra_note = (
+                f" {len(additional_references) + 1} approved reference images are attached in total: "
+                f"`{approved_reference_path.name}` is the PRIMARY reference and these are supplementary "
+                f"references of the SAME design covering other aspects ({names}). Judge the renders "
+                f"against ALL attached references: a detail visible only in a supplementary view "
+                f"(back view, close-up, material callout) is still a requirement. Report one entry per "
+                f"attached reference in reference_checks. If references contradict each other, say so "
+                f"in notes instead of guessing."
+            )
         ref_note = (
             f"Compare against attached approved reference `{approved_reference_path.name}`. Rate reference_score [matched, 10]."
+            + extra_note
             if profile.reference_mode == "REFERENCE_GUIDED" and approved_reference_path
             else "TEXT_ONLY mode: evaluate against textual specification; set identity_or_reference_fidelity='NOT_VERIFIED' (do not claim original character likeness)."
         )
@@ -476,6 +555,7 @@ class IndependentMultimodalReviewer:
                 '  "observations_by_view": {"<view>": ["specific visual observation 1", "..."]},',
                 '  "domain_verdicts": {"technical_mesh_validity": "PASS|FAIL|NOT_VERIFIED", "face_and_body_sculpt_quality": "PASS|FAIL", "identity_or_reference_fidelity": "PASS|FAIL|NOT_VERIFIED", "texture_and_material_quality": "PASS|FAIL|NOT_VERIFIED", "rigging_and_deformation_quality": "PASS|FAIL|NOT_VERIFIED", "animation_quality": "PASS|FAIL|NOT_VERIFIED", "engine_export_compatibility": "PASS|FAIL|NOT_VERIFIED"},',
                 '  "criteria_verdicts": {"<criterion_id>": "PASS|FAIL"},',
+                '  "reference_checks": [{"reference_file": "<attached reference filename>", "role": "primary|supplementary", "checks_performed": ["..."], "match": "PASS|FAIL", "notes": "..."}],',
                 '  "defects": [{"defect_id": "D1", "defect_type": "round_protruding_eyes|facial_proportion_error|scalp_exposure|rope_like_hair|hair_face_penetration|stiff_fingers_bad_grip|bulbous_boots|floating_thigh_seam|stiff_shoulders_knees|reference_match_gap", "severity": "BLOCKER|MAJOR|MINOR", "affected_objects": ["SM_Char_..."], "visual_problem": "...", "required_fix_action": "...", "qa_criterion_id": "..."}],',
                 '  "reference_score": [7, 10],',
                 '  "before_after_improvement": {"improved": true, "summary": "..."}',
