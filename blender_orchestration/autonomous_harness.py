@@ -644,7 +644,9 @@ class AutonomousBlenderHarness:
                 })
                 resp = self._invoke_agent(
                     self.model_id,
-                    current_prompt,
+                    "Return scene-editing code only. The harness captures before/after renders. "
+                    "Do not invoke Blender render operators or change cameras to collect evidence.\n\n"
+                    + current_prompt,
                     files=attach_files if attempt == 1 else None,
                     session_id=None,
                     timeout_sec=self.stage_timeout_sec,
@@ -689,7 +691,7 @@ class AutonomousBlenderHarness:
                     continue
 
                 try:
-                    ast.parse(code)
+                    tree = ast.parse(code)
                 except SyntaxError as syn_err:
                     last_error = f"Python SyntaxError at line {syn_err.lineno}: {syn_err.msg} ({syn_err.text!r})"
                     current_prompt = (
@@ -698,6 +700,14 @@ class AutonomousBlenderHarness:
                         "Keep your script concise (<180 lines) using `bmo.*` and `bt.make_pbr_material(...)` and return ONE complete, syntactically valid ```python ... ``` script.\n\n"
                         + agent_prompt
                     )
+                    continue
+
+                if any(
+                    isinstance(node, ast.Call) and ast.unparse(node.func) == "bpy.ops.render.render"
+                    for node in ast.walk(tree)
+                ):
+                    last_error = "Producer attempted to render inside an edit script."
+                    current_prompt = "Remove the render calls. The harness renders the edited asset.\n\n" + agent_prompt
                     continue
 
                 last_code = code
@@ -773,6 +783,7 @@ class AutonomousBlenderHarness:
             self.model_roles["supervisor"],
             "Act as the Blender technical director. Review the attached views and the independent findings. "
             "Choose one next action: repair one specific defect or stop. Never author code or change the goal. "
+            "The harness captures all comparison renders, so the work order must only assign scene edits. "
             "In case of non-improvement, choose a different structural repair while preserving verified components. "
             "Return one JSON object with decision (repair|stop), reason and, for repair, "
             "target_object, defect, geometry_change, allowed_operations, expected_output, acceptance_criteria.\n"

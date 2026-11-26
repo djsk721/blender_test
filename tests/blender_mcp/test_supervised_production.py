@@ -167,3 +167,23 @@ def test_explicit_cpu_render_skips_gpu_probe(monkeypatch):
     monkeypatch.setattr(blender_toolkit, "_min_free_gpu_vram_mib", fail_gpu_probe)
     assert blender_toolkit._configure_render_engine(scene, res=(384, 384), samples=8) == "CPU"
     assert scene.cycles.device == "CPU"
+
+
+def test_producer_render_is_rejected_before_blender_execution(tmp_path):
+    (tmp_path / "checkpoints").mkdir()
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    harness = AutonomousBlenderHarness(
+        agent_invoke_fn=lambda *a, **kw: {
+            "returncode": 0, "session_id": "qwen-session",
+            "text": "```python\nbpy.ops.render.render(write_still=True)\n```",
+        },
+    )
+    result = harness._run_code_agent_with_retry(
+        adapter=object(), scene_name="SCENE_Test", run_dir=tmp_path, stage_label="stage_02_blockout",
+        user_prompt="Fixture", agent_prompt="Build the first part", attach_files=None,
+        telemetry=[], producer_sessions=set(), scripts_dir=scripts, max_code_retries=1,
+    )
+    assert not result["ok"]
+    assert "render inside an edit script" in result["error"]
+    assert not list(scripts.glob("*.py"))
