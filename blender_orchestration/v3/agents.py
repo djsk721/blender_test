@@ -27,6 +27,17 @@ from ..rubric_evaluator import ISOLATED_NO_MCP_OPENCODE_CONFIG, build_isolated_o
 LOCK_PATH = Path(tempfile.gettempdir()) / "blender_harness_v3_model.lock"
 
 
+def response_failure(raw: dict[str, Any], model_id: str) -> str | None:
+    """Fail closed even if OpenCode returns exit zero with a provider error event."""
+    if raw.get('model_id') != model_id:
+        return 'missing or mismatched model identity'
+    failure = raw.get('errors') or raw.get('quota_blocked') or raw.get('stderr')
+    if (raw.get('returncode') != 0 or not raw.get('session_id') or raw.get('errors')
+            or raw.get('quota_blocked') or raw.get('timed_out')):
+        return f"rc={raw.get('returncode')}: {str(failure or 'missing session')[:1500]}"
+    return None
+
+
 def isolated_config_overrides(model_id: str) -> dict[str, Any]:
     return {
         "agents": {"title": {"model": model_id}, "compaction": {"model": model_id}},

@@ -1,6 +1,6 @@
 """Independent visual review of actual Blender renders against the reference set.
 
-The reviewer (a Claude model, never the producer) receives bounded contact sheets of the real
+The independent reviewer (never the producer) receives bounded contact sheets of the real
 renders plus bounded copies of every reference image, and must return structured defects that
 name a region, the reference and viewpoint used, what is observed, the expected correction and a
 verification criterion. Output that does not prove inspection is NOT_VERIFIED, never PASS.
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .correction import REGION_PRIORITY
+from .agents import response_failure
 
 # Existing thresholds (unchanged from the frozen harness): blockout 75, detailed modeling 80,
 # materials 86, rigging/animation 65; final asset 85 via the frozen 100-point rubric.
@@ -127,6 +128,8 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 
 def parse_review(text: str, *, phase: str, render_views: list[str]) -> dict[str, Any]:
     """Strictly parse reviewer JSON. Never returns PASS for output that does not prove inspection."""
+    if '```python' in text.lower() or '```py\n' in text.lower():
+        return {"verdict": "NOT_VERIFIED", "passed": False, "score": 0.0, "defects": [], "reason": "reviewer supplied executable code instead of findings"}
     data = _extract_json(text)
     if not data:
         return {"verdict": "NOT_VERIFIED", "passed": False, "score": 0.0, "defects": [], "reason": "unparseable reviewer output"}
@@ -224,9 +227,9 @@ class IndependentReviewer:
         raw = self.invoke(self.model_id, prompt, files=[*sheets, *refs], timeout_sec=self.timeout_sec,
                           title=f"V3 independent review ({phase})")
         sid = str(raw.get("session_id") or "")
-        if int(raw.get("returncode", 1)) != 0 or not sid or raw.get('errors'):
+        if failure := response_failure(raw, self.model_id):
             result = {"verdict": "NOT_VERIFIED", "passed": False, "score": 0.0, "defects": [],
-                      "reason": f"reviewer failed rc={raw.get('returncode')} errors={str(raw.get('errors'))[:300]}"}
+                      "reason": f"reviewer failed: {failure}"}
         elif sid in producer_session_ids:
             result = {"verdict": "NOT_VERIFIED", "passed": False, "score": 0.0, "defects": [],
                       "reason": "reviewer session is not independent of the producer"}
@@ -236,6 +239,7 @@ class IndependentReviewer:
             "phase": phase, "reviewer_model_id": self.model_id, "reviewer_session_id": sid,
             "duration_sec": raw.get("duration_sec"), "tokens": raw.get("tokens"),
             "sheet": str(sheets[0]) if sheets else None,
+            "renders": [{"view": view, "path": str(path), "sha256": _sha(path)} for view, path in render_items],
             "evidence": [{"path": str(p), "sha256": _sha(p)} for p in [*sheets, *refs]],
         })
         return result

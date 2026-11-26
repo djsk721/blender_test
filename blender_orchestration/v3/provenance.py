@@ -10,12 +10,13 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 REQUIRED_PRODUCER_MODEL_ID = "strata/sc117-qwen38-abliterated-iq3_s"
-DEFAULT_REVIEWER_MODEL_ID = "factchat-claude/claude-opus-5-5"
+DEFAULT_REVIEWER_MODEL_ID = "openai/gpt-6.2-sol"
 
 PRODUCER = "producer"
 REVIEWER = "reviewer"
@@ -23,7 +24,7 @@ HARNESS = "harness"
 
 
 class RoleViolationError(RuntimeError):
-    """Raised when code or a decision would cross the Claude/Qwen role boundary."""
+    """Raised when code or a decision would cross the reviewer/producer boundary."""
 
 
 def sha256_text(text: str) -> str:
@@ -46,14 +47,14 @@ class ModelRoles:
 def validate_model_roles(producer: str, reviewer: str, *, required_producer: str = REQUIRED_PRODUCER_MODEL_ID) -> ModelRoles:
     """Enforce: producer is exactly the required Qwen model; reviewer is a different, non-local model."""
     p, r = _base(producer), _base(reviewer)
-    if p != _base(required_producer):
+    if producer != required_producer or p != REQUIRED_PRODUCER_MODEL_ID:
         raise RoleViolationError(
             f"Producer must be {required_producer!r}; got {producer!r}. Silent producer substitution is forbidden."
         )
-    if not r:
-        raise RoleViolationError("A reviewer model is required.")
-    if not r.startswith("factchat-claude/claude-"):
-        raise RoleViolationError("V3 requires an independent registered Claude reviewer.")
+    if not re.fullmatch(r"[^/\s#]+/[^/\s#]+(?:#[^/\s#]+)?", reviewer):
+        raise RoleViolationError("An explicit provider/model ID is required for the reviewer.")
+    if r == p or r.startswith('strata/') or 'qwen' in r.casefold():
+        raise RoleViolationError("V3 requires a non-Qwen independent vision reviewer.")
     return ModelRoles(producer=producer, reviewer=reviewer)
 
 
@@ -97,7 +98,7 @@ class ProvenanceLedger:
 
     def register_producer_output(self, *, model_id: str, session_id: str, work_order_id: str,
                                  prompt: str, response_text: str, code: str) -> ProvenanceRecord:
-        if _base(model_id) != _base(self.roles.producer):
+        if model_id != REQUIRED_PRODUCER_MODEL_ID or model_id != self.roles.producer:
             raise RoleViolationError(f"Only the producer {self.roles.producer!r} may author Blender code; got {model_id!r}.")
         if not session_id or not code.strip() or code not in response_text:
             raise RoleViolationError("Executable code must be extracted verbatim from the producer response.")
@@ -119,7 +120,7 @@ class ProvenanceLedger:
         known = self._records.get(record.record_id)
         if known is None or known != record:
             raise RoleViolationError("Execution refused: unknown or altered provenance record.")
-        if record.role != PRODUCER or _base(record.model_id) != _base(self.roles.producer):
+        if record.role != PRODUCER or record.model_id != REQUIRED_PRODUCER_MODEL_ID or record.model_id != self.roles.producer:
             raise RoleViolationError(f"Execution refused: code authored by role={record.role} model={record.model_id}.")
         if sha256_text(code) != record.code_sha256:
             raise RoleViolationError("Execution refused: code differs from the producer-authored code.")

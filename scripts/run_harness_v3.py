@@ -29,7 +29,8 @@ def main():
     parser.add_argument('--geometry-strategy', choices=['FROM_SCRATCH'], default='FROM_SCRATCH')
     parser.add_argument('--animation-mode', choices=['static', 'rigged', 'animated'], default='animated')
     parser.add_argument('--producer-model-id', default=REQUIRED_PRODUCER_MODEL_ID)
-    parser.add_argument('--reviewer-model-id', default=DEFAULT_REVIEWER_MODEL_ID)
+    parser.add_argument('--reviewer-model-id', default=os.environ.get('BLENDER_V3_REVIEWER_MODEL_ID', DEFAULT_REVIEWER_MODEL_ID),
+                        help='Registered non-Qwen vision model; defaults to BLENDER_V3_REVIEWER_MODEL_ID or %(default)s')
     parser.add_argument('--blender-port', type=int, required=True)
     parser.add_argument('--max-stage-corrections', type=int, choices=range(7), default=3)
     parser.add_argument('--stage-timeout', type=int, default=240)

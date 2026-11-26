@@ -24,6 +24,10 @@ def roles():
 def test_only_qwen_source_dispatched(tmp_path):
     with pytest.raises(RoleViolationError):
         validate_model_roles(DEFAULT_REVIEWER_MODEL_ID, DEFAULT_REVIEWER_MODEL_ID)
+    assert roles().reviewer == 'openai/gpt-6.2-sol'
+    for name in (REQUIRED_PRODUCER_MODEL_ID, 'another/qwen-test', 'strata/alias'):
+        with pytest.raises(RoleViolationError):
+            validate_model_roles(REQUIRED_PRODUCER_MODEL_ID, name)
     ledger = ProvenanceLedger(roles())
     adapter = Mock()
     ex = BlenderExecutor(project_root=tmp_path, scene_name='Test', run_dir=tmp_path, mcp_env={}, ledger=ledger,
@@ -38,7 +42,7 @@ def test_only_qwen_source_dispatched(tmp_path):
         ex.execute_producer_script('pass', replace(rec, session_id='wrong'), phase='test', rollback_checkpoint_id=None)
     with pytest.raises(RoleViolationError):
         ex.execute_producer_script('print(1)', rec, phase='test', rollback_checkpoint_id=None)
-    for source in ('x = (', 'bpy.ops.wm.open_mainfile()', 'mesh.use_auto_smooth = True'):
+    for source in ('x = (', 'return', 'bpy.ops.wm.open_mainfile()', 'mesh.use_auto_smooth = True'):
         assert not ex.execute_producer_script(source, register(source), phase='test', rollback_checkpoint_id=None)['ok']
     adapter.execute_blender_json.assert_not_called()
     adapter.execute_blender_json.return_value = {'parsed': {'ok': True}}
@@ -98,16 +102,23 @@ def test_full_reference_delivery_and_reviewer_isolation(tmp_path):
     m = build_manifest_with_primary(refs, 'official.png')
     assert len(m.entries) == 3 and m.primary.path.name == 'official.png'
     payload = json.dumps({'stage_score_100': 91, 'passed': True, 'observations_by_view': {'front': ['grounded']}})
-    invoke = Mock(return_value={'returncode': 0, 'session_id': 'q', 'text': payload})
+    invoke = Mock(return_value={'returncode': 0, 'session_id': 'q', 'text': payload, 'model_id': roles().producer})
     p = Production(run=tmp_path / 'run', root=tmp_path, goal='exact\n', manifest=m, roles=roles(), mode='static',
                    invoke=invoke, budget=3, timeout=10, samples=1)
     p.call('producer', 'plan', p.files, p.run / 'test_call')
     assert invoke.call_args.kwargs['files'] == p.files
+    invoke.return_value['model_id'] = roles().reviewer
     result = IndependentReviewer(roles().reviewer, invoke).review(phase='silhouette',
         renders=[{'view': 'front', 'path': m.primary.path}], reference_copies=p.copies, goal_excerpt='goal',
         plan_excerpt='', out_dir=tmp_path / 'review', producer_session_ids={'q'})
     assert result['verdict'] == 'NOT_VERIFIED'
     assert invoke.call_args.kwargs['files'][1:] == p.files
+    invoke.return_value.update(session_id='gpt', errors=['HTTP 402 insufficient_quota'])
+    result = IndependentReviewer(roles().reviewer, invoke).review(phase='silhouette',
+        renders=[{'view': 'front', 'path': m.primary.path}], reference_copies=p.copies, goal_excerpt='goal',
+        plan_excerpt='', out_dir=tmp_path / 'review', producer_session_ids={'q'})
+    assert result['verdict'] == 'NOT_VERIFIED' and '402' in result['reason']
+    assert parse_review(payload + '\n```python\npass\n```', phase='silhouette', render_views=['front'])['verdict'] == 'NOT_VERIFIED'
     (refs / 'missing.jpg').write_text('not an image')
     with pytest.raises(ReferenceManifestError):
         build_manifest_with_primary(refs, 'official.png')

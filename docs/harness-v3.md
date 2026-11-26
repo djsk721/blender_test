@@ -1,6 +1,6 @@
 # V3: reference-guided character production
 
-V3 is a separate CLI for from-scratch character production. It leaves the legacy harness and its workflows available. The producer is locked to `strata/sc117-qwen38-abliterated-iq3_s`; a registered Claude model is required for visual review. Neither the reviewer nor its work orders can submit executable asset code. The execution path records the producer session and hashes the exact source before dispatch. Static Python checks are diagnostics and policy guardrails, **not** a sandbox for arbitrary untrusted Python.
+V3 is a separate CLI for from-scratch character production. It leaves the legacy harness and its workflows available. The producer is locked to `strata/sc117-qwen38-abliterated-iq3_s`. The default reviewer is `openai/gpt-6.2-sol`; override it with `--reviewer-model-id` or `BLENDER_V3_REVIEWER_MODEL_ID` and independently verify vision support before launch. No automatic fallback is used. Reviewers cannot submit executable asset code. The execution path records the producer session and hashes the exact source before dispatch. Static Python checks are diagnostics and policy guardrails, **not** a sandbox for arbitrary untrusted Python.
 
 Generate an approved manifest outside the source image directory:
 
@@ -29,10 +29,11 @@ goal=$(cat docs/zelda-production-goal.txt; printf x)
 python3 -u scripts/run_harness_v3.py --prompt "${goal%x}" \
   --run-dir output/zelda-v3-new-run --asset-name Zelda \
   --reference-manifest output/v3-inputs/zelda.json --animation-mode animated \
-  --geometry-strategy FROM_SCRATCH --blender-port 19989 --max-stage-corrections 3
+  --geometry-strategy FROM_SCRATCH --blender-port 19989 --max-stage-corrections 3 \
+  --reviewer-model-id openai/gpt-6.2-sol
 ```
 
-Use a fresh run directory and an unused port. The CLI sets CPU rendering and software viewport. Original references are snapshotted byte-for-byte; bounded attachments retain a hash link to the source. Both Qwen and Claude receive pixels through `opencode run --file`. Pixel support was checked with a synthetic image containing text and colored shapes. A provider error is not a successful review.
+Use a fresh run directory and an unused port. The CLI sets CPU rendering and software viewport. Original references are snapshotted byte-for-byte; bounded attachments retain a hash link to the source. Both Qwen and the reviewer receive pixels through `opencode run --file`. Pixel support was checked with synthetic colored shapes. Provider errors, even with a zero CLI exit code, cannot approve a gate.
 
 Qwen analyzes the references, then owns the locked design and scripts. Independent silhouette approval precedes separate face, hair and costume phases. The combined modeling gate precedes materials, which precede rigging and then animation. Legacy aggregate score cutoffs are retained (75 silhouette, 80 modeling, 86 lookdev, 65 motion, 85 final with the frozen rubric/category floors). Face, hair and costume have separate phase progress checks. Only the workflow captures, reloads, and exports candidates; no interactive production edits are required. Each review iteration saves source, execution record, scene measurements, checkpoint, and render evidence. Reviews of regressions are kept, but corrections continue from the selected candidate. A failed or unavailable gate never approves release.
 

@@ -98,6 +98,7 @@ def validate_blender_script(code: str, *, max_lines: int = MAX_SCRIPT_LINES_DEFA
         errors.append(f"script has {n_lines} lines (limit {max_lines}); split work across phases instead of one giant script")
     try:
         tree = ast.parse(code)
+        compile(tree, '<producer_script>', 'exec')
     except SyntaxError as exc:
         return ValidationResult(False, code, [f"SyntaxError line {exc.lineno}: {exc.msg}"])
 

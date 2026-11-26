@@ -10,6 +10,7 @@ from ..reference_manifest import (detect_reference_overlaps, load_reference_mani
                                   make_review_copies, snapshot_references, verify_image_integrity)
 from ..rubric_evaluator import BlindRubricEvaluator, FROZEN_MIN_TOTAL_SCORE
 from .checkpoints import CheckpointManager, sha256_file, validate_state_against_registry, write_json_atomic
+from .agents import response_failure
 from .correction import CorrectionController
 from .provenance import ProvenanceLedger, sha256_text
 from .reviewer import IndependentReviewer, _extract_json
@@ -123,8 +124,8 @@ class Production:
         print(f'{role}: {directory.relative_to(self.run)}', flush=True)
         r = self.invoke(model, prompt, files=files, timeout_sec=self.timeout, title='V3 ' + directory.name)
         write_json_atomic(directory / 'response.json', r)
-        if r.get('returncode') != 0 or not r.get('session_id') or r.get('errors') or r.get('model_id', model) != model:
-            raise Blocked(f"{role} call failed: {r.get('errors') or r.get('stderr') or 'missing session or wrong model'}")
+        if failure := response_failure(r, model):
+            raise Blocked(f'{role} call failed: {failure}')
         if role == 'producer':
             self.sessions.add(r['session_id'])
         return r
@@ -148,7 +149,11 @@ class Production:
         return plan
 
     def edit(self, ex, stage, prompt, files, parent, rollback):
-        original = prompt + self.skills(stage)
+        original = ('Keep the complete Python response under 140 lines. Use reusable functions and compact data; '
+                    'omit explanatory comments. Finish the closing code fence. Deliver the scoped stage, not later stages.\n\n'
+                    'Use explicit keyword arguments and named dictionary fields for toolkit data. Avoid variable-length '
+                    'positional tuple encodings for sections; check every call against its callee signature.\n\n'
+                    + prompt + self.skills(stage))
         prompt = original
         code = None
         for retry in range(1, 3):
@@ -177,7 +182,14 @@ class Production:
                     ex.init_scene()
             else:
                 result = {'error': 'No fenced Python block in Qwen reply'}
-            prompt = build_retry_work_order(original, str(result.get('traceback') or result.get('error') or 'No meshes'), code)
+            error = str(result.get('traceback') or result.get('error') or 'No meshes')
+            if 'SyntaxError' in error or not code:
+                prompt = ('The previous response was not valid complete Python. Rewrite it from scratch in '
+                          'under 100 lines; do not repeat the broken response.\n' + original)
+            else:
+                prompt = build_retry_work_order(original, error, code) + (
+                    '\nFor indexing or unpacking errors, replace the inconsistent tuple encoding with named fields, '
+                    'rather than changing the tuple size in just one caller.')
         raise Blocked(f'{stage}: bounded technical retries exhausted: {result.get("error")}')
 
     def candidate(self, ex, stage, plan, edit=True):
@@ -306,7 +318,12 @@ class Production:
         renders = ex.render(directory / 'renders', 'final', mode='lookdev', res=(768, 960), samples=self.samples * 2)['render']['renders']
         pending = directory / f'{self.asset}.glb'
         technical = ex.export_glb(pending)
-        evaluator = BlindRubricEvaluator(model_id=self.roles.reviewer, timeout_sec=self.timeout, invoke_fn=self.invoke)
+        def invoke_review(model, prompt, **kwargs):
+            response = self.invoke(model, prompt, **kwargs)
+            failure = response_failure(response, self.roles.reviewer)
+            return response | {'returncode': 1, 'errors': [failure]} if failure else response
+
+        evaluator = BlindRubricEvaluator(model_id=self.roles.reviewer, timeout_sec=self.timeout, invoke_fn=invoke_review)
         review = evaluator.evaluate(renders=renders, producer_session_ids=self.sessions, reference_mode='REFERENCE_GUIDED',
             approved_reference_path=self.files[0], additional_references=self.files[1:],
             frozen_design_spec=json.dumps(plan), technical_gates_passed=technical.get('valid') is True)
