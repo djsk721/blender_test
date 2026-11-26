@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -2283,6 +2284,9 @@ def _configure_render_engine(scene: Any, *, res: tuple[int, int], samples: int, 
     except Exception:
         scene.view_settings.view_transform = "Standard"
     scene.view_settings.exposure = 0.0
+
+    if os.environ.get("BLENDER_RENDER_DEVICE", "").strip().upper() == "CPU":
+        return _switch_cycles_to_cpu(scene)
 
     free_mib = _min_free_gpu_vram_mib() if use_gpu else 0
     if use_gpu and (free_mib is None or free_mib < 6000):

@@ -336,7 +336,7 @@ class AutonomousBlenderHarness:
     def __init__(
         self,
         *,
-        model_id: str = DEFAULT_LIGHT_MODEL_ID,
+        model_id: str = QWEN_FLASH_NEXT_MODEL_ID,
         expected_model_id: str | None = None,
         producer_model_id: str | None = None,
         supervisor_model_id: str = DEFAULT_LIGHT_MODEL_ID,

@@ -147,3 +147,23 @@ def test_production_reset_leaves_other_blender_sessions_alone(tmp_path, monkeypa
     monkeypatch.setattr(resetter, "_make_manager", Manager)
     with pytest.raises(RuntimeError, match="outside this managed runtime"):
         resetter.reset_for_next_model(preserve_backups=True)
+
+
+def test_explicit_cpu_render_skips_gpu_probe(monkeypatch):
+    from types import SimpleNamespace
+
+    from blender_orchestration import blender_toolkit
+
+    scene = SimpleNamespace(
+        render=SimpleNamespace(image_settings=SimpleNamespace()),
+        cycles=SimpleNamespace(),
+        view_settings=SimpleNamespace(),
+    )
+
+    def fail_gpu_probe():
+        pytest.fail("CPU render must not probe the GPU")
+
+    monkeypatch.setenv("BLENDER_RENDER_DEVICE", "CPU")
+    monkeypatch.setattr(blender_toolkit, "_min_free_gpu_vram_mib", fail_gpu_probe)
+    assert blender_toolkit._configure_render_engine(scene, res=(384, 384), samples=8) == "CPU"
+    assert scene.cycles.device == "CPU"
