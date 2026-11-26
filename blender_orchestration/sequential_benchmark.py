@@ -232,6 +232,7 @@ class BlenderSessionResetter:
         expected_saved_files: list[Path] | None = None,
         forbidden_residual_objects: list[str] | None = None,
         start_fresh_blender: bool = True,
+        preserve_backups: bool = False,
     ) -> dict[str, Any]:
         """Execute all 10 Phase B reset checks cleanly using BlenderLifecycleManager."""
         reset_started = _utc_now_iso()
@@ -249,6 +250,12 @@ class BlenderSessionResetter:
         checks["2_no_inflight_mcp_jobs"] = (len(active_jobs) == 0 and len(pending_jobs) == 0)
 
         pre_status = mgr.status(probe_live=True)
+        if pre_status.get("addon_reachable") and (
+            pre_status.get("ownership") != "managed" or not pre_status.get("blender_alive")
+        ):
+            raise RuntimeError("The Blender MCP port belongs to a session outside this managed runtime.")
+        if active_jobs or pending_jobs or pre_status.get("work_lock_held"):
+            raise RuntimeError("The managed Blender session still has work in progress.")
         old_state = mgr.read_state()
         old_blender_rec = ProcessRecord.from_dict(old_state.get("blender"))
         old_pid = pre_status.get("blender_pid") or (old_blender_rec.pid if old_blender_rec else None)
@@ -282,7 +289,7 @@ class BlenderSessionResetter:
         # Ensure zero backup .blend files linger when config.json enables auto_restore_on_restart
         backups_dir = Path(mgr.cfg.backups_dir)
         cleared_backups: list[str] = []
-        if backups_dir.is_dir():
+        if not preserve_backups and backups_dir.is_dir():
             for bk in backups_dir.glob("*.blend*"):
                 try:
                     bk.unlink()

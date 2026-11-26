@@ -9,6 +9,7 @@ and isolated Blender MCP port 9878 without disturbing port 9876 or Strata.
 
 from __future__ import annotations
 
+import argparse
 import datetime
 import json
 from pathlib import Path
@@ -23,8 +24,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from blender_orchestration.autonomous_harness import _check_agent_health, _invoke_agent_cli, _write_json_atomic
 from blender_orchestration.blender_toolkit import collect_resource_snapshot  # noqa: E402
-from blender_orchestration.mcp_adapter import MCPAdapter, StdioMCPTransport  # noqa: E402
+from blender_orchestration.mcp_adapter import MCPAdapter, StdioMCPTransport, verify_approved_base_mesh_manifest  # noqa: E402
 from blender_orchestration.multimodal_qa import _extract_json_object, parse_opencode_json_events  # noqa: E402
 from blender_orchestration.rubric_evaluator import (  # noqa: E402
     ISOLATED_NO_MCP_OPENCODE_CONFIG,
@@ -32,6 +34,7 @@ from blender_orchestration.rubric_evaluator import (  # noqa: E402
     invoke_isolated_opencode_vision,
 )
 from blender_orchestration.sequential_benchmark import BlenderSessionResetter  # noqa: E402
+from run_autonomous_harness import verify_registered_models
 
 EXPECTED_OPENCODE_MODEL_ID = "strata/sc117-qwen38-abliterated-iq3_s"
 STRATA_MODELS_URL = "http://127.0.0.1:8080/v1/models"
@@ -124,7 +127,73 @@ def _mcp_env(port: int, runtime_dir: Path) -> dict[str, str]:
     }
 
 
-def main() -> int:
+def production_preflight(output: Path, port: int, manifest: Path | None) -> int:
+    """Check production dependencies without historical benchmark assets or global MCPs."""
+    output = output.resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    report: dict[str, Any] = {"models": [EXPECTED_OPENCODE_MODEL_ID], "passed": False}
+    runtime_dir = output / "mcp_runtime"
+    resetter = BlenderSessionResetter(project_root=PROJECT_ROOT, runtime_dir=runtime_dir, blender_port=port)
+    try:
+        report["strata_model_ids"] = [model["id"] for model in _fetch_json(STRATA_MODELS_URL)["data"]]
+        report["resources"] = collect_resource_snapshot()
+        verify_registered_models({EXPECTED_OPENCODE_MODEL_ID})
+        response = _invoke_agent_cli(
+            EXPECTED_OPENCODE_MODEL_ID, 'Return only JSON {"ready":true}. Do not use tools.',
+            timeout_sec=60, title="Qwen production readiness",
+        )
+        report["producer"] = response
+        _check_agent_health(response)
+        if response["returncode"] or _extract_json_object(response["text"]) != {"ready": True}:
+            raise RuntimeError("Qwen did not return the requested structured handoff.")
+        provenance = verify_approved_base_mesh_manifest(manifest) if manifest else None
+        report["blender_reset"] = resetter.reset_for_next_model(start_fresh_blender=True, preserve_backups=True)
+        adapter = MCPAdapter(
+            StdioMCPTransport(cwd=PROJECT_ROOT, env_overrides=_mcp_env(port, runtime_dir)),
+            reference_mode="TEXT_ONLY", allow_external_assets=False,
+        )
+        try:
+            capabilities = adapter.discover_capabilities()
+            report["blender_mcp"] = adapter.call_tool(
+                "get_addon_status", {"user_prompt": "Production readiness"}, stage="preflight_addon_status",
+            )
+            if "execute_blender_code" not in capabilities["tools"]:
+                raise RuntimeError("Blender MCP does not expose execute_blender_code.")
+            if provenance:
+                code = (
+                    "import bpy, json\n"
+                    f"with bpy.data.libraries.load({json.dumps(provenance['blend_path'])}) as (source, target):\n"
+                    "    target.objects = ['GEO-body_female_stylized'] if 'GEO-body_female_stylized' in source.objects else []\n"
+                    "print('__ORCH_JSON__:' + json.dumps({'mesh_names': [o.name for o in target.objects if o and o.type == 'MESH']}))\n"
+                )
+                loaded = adapter.execute_blender_json(code, user_prompt="Verify CC0 Blender library", stage="preflight_base_mesh")["parsed"]
+                if not loaded.get("mesh_names"):
+                    raise RuntimeError("The verified CC0 library did not load the expected mesh.")
+                report["base_mesh"] = {**provenance, **loaded}
+            report["passed"] = bool(report["blender_reset"]["reset_passed"])
+        finally:
+            adapter.close()
+    except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        report["error"] = str(exc)
+    finally:
+        if "blender_reset" in report:
+            try:
+                report["cleanup"] = resetter.reset_for_next_model(start_fresh_blender=False, preserve_backups=True)
+            except RuntimeError as exc:
+                report["cleanup"] = {"reset_passed": False, "error": str(exc)}
+        _write_json_atomic(output / "preflight_report.json", report)
+    print(json.dumps({"passed": report["passed"], "error": report.get("error"), "report": str(output / "preflight_report.json")}))
+    return 0 if report["passed"] else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--production-output", type=Path, help="New directory for bounded production preflight.")
+    parser.add_argument("--port", type=int, default=ISOLATED_PORT)
+    parser.add_argument("--base-mesh-manifest", type=Path)
+    args = parser.parse_args(argv)
+    if args.production_output:
+        return production_preflight(args.production_output, args.port, args.base_mesh_manifest)
     PREFLIGHT_OUT.parent.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),

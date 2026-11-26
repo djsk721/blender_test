@@ -1,6 +1,6 @@
 """Autonomous multi-agent Blender design harness with real MCP execution and visual feedback.
 
-Orchestrates isolated specialist OpenCode agent contexts (exclusively `openai/gpt-6.2-sol#low`),
+Orchestrates separate supervisor, producer and visual reviewer OpenCode contexts,
 dynamic Blender Skill loading & 6-state lifecycle tracking, genuine agent-authored Blender Python
 execution via Blender MCP (`execute_blender_code`), clay & lookdev multi-view Cycles GPU rendering,
 iterative visual defect diagnosis and surgical in-place repair, rigging/animation validation,
@@ -13,6 +13,7 @@ import ast
 import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -54,6 +55,7 @@ class QuotaBlockedError(RuntimeError):
         )
 from .sequential_benchmark import BlenderSessionResetter
 from .skill_registry import BlenderDirector, SkillRegistry
+from .visual_qa import hash_file_sha256
 
 _PY_FENCE_RE = re.compile(r"```(?:python|py)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -203,7 +205,7 @@ def _invoke_agent_cli(
     timeout_sec: int = 180,
     title: str = "Autonomous Blender Specialist",
 ) -> dict[str, Any]:
-    """Invoke an isolated OpenCode standalone session (`openai/gpt-6.2-sol#low`)."""
+    """Invoke a bounded, isolated OpenCode standalone session."""
     cmd = ["opencode", "run", "--standalone", "--archived", "--format", "json", "-m", model_id, "--title", title]
     if session_id:
         cmd.extend(["--session", session_id])
@@ -261,6 +263,73 @@ def _invoke_agent_cli(
         }
 
 
+def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump(data, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def _load_resume_state(run_dir: Path, checkpoint: Path, stage: int, goal: dict[str, Any]) -> dict[str, Any]:
+    state_path = run_dir / "production_state.json"
+    spec_path = run_dir / "handoffs" / "01_design_spec.json"
+    if not all(path.is_file() for path in (state_path, spec_path, checkpoint)):
+        raise ValueError("Resume requires the original run state, verified checkpoint and design specification.")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if (
+        state.get("goal") != goal
+        or state.get("next_stage") != stage
+        or state.get("checkpoint") != str(checkpoint.resolve())
+        or state.get("checkpoint_sha256") != hash_file_sha256(checkpoint)
+        or state.get("design_sha256") != hash_file_sha256(spec_path)
+    ):
+        raise ValueError("Resume does not match the recorded goal, stage, checkpoint or design specification.")
+    gates = state.get("technical_gates", {})
+    stage_requirements = {
+        3: ("blockout_created",),
+        4: ("blockout_created", "detailed_modeling_created"),
+        5: ("blockout_created", "detailed_modeling_created", "materials_and_uvs_applied"),
+        6: ("blockout_created", "detailed_modeling_created", "materials_and_uvs_applied",
+            "rig_validated", "animation_validated"),
+    }
+    if stage not in stage_requirements or not all(gates.get(name) is True for name in stage_requirements[stage]):
+        raise ValueError("Resume would skip a required technical gate.")
+    approved = state.get("approved_stage_reviews", {})
+    required_reviews = []
+    if stage >= 4:
+        required_reviews.append("detailed_modeling")
+    if stage >= 5:
+        required_reviews.append("materials_and_textures")
+    if stage == 6 and goal.get("animation_mode") == "animated":
+        required_reviews.append("rigging_and_animation")
+    if not all(approved.get(name, {}).get("passed") is True for name in required_reviews):
+        raise ValueError("Resume would skip a required independent visual review.")
+    return state
+
+
+class ProductionBlockedError(RuntimeError):
+    """A dependency or a mandatory gate blocks production."""
+
+
+def _check_agent_health(response: dict[str, Any]) -> None:
+    errors = response.get("errors") or []
+    if quota := response.get("quota_blocked") or detect_quota_error(errors):
+        raise QuotaBlockedError(quota)
+    diagnostic = " ".join([str(response.get("stderr") or ""), *map(str, errors)])
+    if response.get("timed_out") or re.search(
+        r"out of memory|cannot pin|failed to allocate|\bGPU (?:is )?lost\b|\bVRAM\b.*(?:fail|insufficient)",
+        diagnostic,
+        re.IGNORECASE,
+    ):
+        raise ProductionBlockedError(f"Model backend unavailable: {diagnostic[-900:]}")
+
+
 class AutonomousBlenderHarness:
     """End-to-end autonomous multi-agent Blender design & optimization harness."""
 
@@ -269,6 +338,9 @@ class AutonomousBlenderHarness:
         *,
         model_id: str = DEFAULT_LIGHT_MODEL_ID,
         expected_model_id: str | None = None,
+        producer_model_id: str | None = None,
+        supervisor_model_id: str = DEFAULT_LIGHT_MODEL_ID,
+        reviewer_model_id: str = DEFAULT_LIGHT_MODEL_ID,
         project_root: Path | None = None,
         blender_port: int = 9878,
         runtime_dir: Path | None = None,
@@ -282,7 +354,12 @@ class AutonomousBlenderHarness:
         stage_reviewer: StageVisualReviewer | None = None,
         final_evaluator: BlindRubricEvaluator | None = None,
     ) -> None:
-        self.model_id = verify_model_id_lock(model_id, expected_model_id)
+        self.model_id = verify_model_id_lock(producer_model_id if producer_model_id is not None else model_id, expected_model_id)
+        self.model_roles = {
+            "producer": self.model_id,
+            "supervisor": verify_model_id_lock(supervisor_model_id, None),
+            "reviewer": verify_model_id_lock(reviewer_model_id, None),
+        }
         self.expected_model_id = expected_model_id
         self.project_root = Path(project_root) if project_root else PROJECT_ROOT
         self.blender_port = int(blender_port)
@@ -294,8 +371,8 @@ class AutonomousBlenderHarness:
         self.render_res_final = render_res_final
         self.render_samples_final = int(render_samples_final)
         self._invoke_agent = agent_invoke_fn or _invoke_agent_cli
-        self.stage_reviewer = stage_reviewer or StageVisualReviewer(model_id=model_id, timeout_sec=stage_timeout_sec)
-        self.final_evaluator = final_evaluator or BlindRubricEvaluator(model_id=model_id, timeout_sec=stage_timeout_sec)
+        self.stage_reviewer = stage_reviewer or StageVisualReviewer(model_id=self.model_roles["reviewer"], timeout_sec=stage_timeout_sec)
+        self.final_evaluator = final_evaluator or BlindRubricEvaluator(model_id=self.model_roles["reviewer"], timeout_sec=stage_timeout_sec)
         self.registry = SkillRegistry(self.project_root / ".opencode" / "skills")
         self.director = BlenderDirector(self.registry)
 
@@ -373,7 +450,7 @@ class AutonomousBlenderHarness:
             f"OUT_DIR = {json.dumps(str(out_dir))}\n"
             f"BASE_MESH_MANIFEST = {json.dumps(manifest_str)}\n"
             f"_CKPT = {json.dumps(ckpt_str)}\n"
-            f"_CHECK_PRESERVE = {json.dumps(check_preserve)}\n"
+            f"_CHECK_PRESERVE = {check_preserve!r}\n"
             "if SCENE_NAME not in bpy.data.scenes:\n"
             "    if _CKPT:\n"
             "        bpy.ops.wm.open_mainfile(filepath=_CKPT)\n"
@@ -412,12 +489,13 @@ class AutonomousBlenderHarness:
             "    print('__ORCH_JSON__:' + json.dumps({'ok': True, 'audit': audit}))\n"
             "except Exception as _exc:\n"
             "    tb = traceback.format_exc()\n"
+            "    rolled_back = False\n"
             "    if _CKPT:\n"
             "        try:\n"
-            "            bpy.ops.wm.open_mainfile(filepath=_CKPT)\n"
+            "            rolled_back = 'FINISHED' in bpy.ops.wm.open_mainfile(filepath=_CKPT, use_scripts=False)\n"
             "        except Exception:\n"
             "            pass\n"
-            "    print('__ORCH_JSON__:' + json.dumps({'ok': False, 'error': str(_exc), 'traceback': tb[-1800:]}))\n"
+            "    print('__ORCH_JSON__:' + json.dumps({'ok': False, 'error': str(_exc), 'traceback': tb[-1800:], 'rolled_back': rolled_back}))\n"
         )
         try:
             res = adapter.execute_blender_json(wrapper, user_prompt=user_prompt, stage=stage_label)["parsed"]
@@ -475,11 +553,19 @@ class AutonomousBlenderHarness:
             "        bpy.ops.file.pack_all()\n"
             "    except Exception:\n"
             "        pass\n"
-            f"    bpy.ops.wm.save_as_mainfile(filepath={json.dumps(str(blend_path))})\n"
             "    from pathlib import Path\n"
+            "    from tempfile import TemporaryDirectory\n"
             f"    p = Path({json.dumps(str(blend_path))})\n"
-            "    hdr = p.read_bytes()[:7] if p.is_file() else b''\n"
-            "    ok = p.is_file() and p.stat().st_size > 1024 and (hdr[:7] == b'BLENDER' or hdr[:4] == b'\\x28\\xb5\\x2f\\xfd' or hdr[:2] == b'\\x1f\\x8b')\n"
+            "    ok = False\n"
+            "    if any(o.type == 'MESH' for o in s.objects):\n"
+            "        with TemporaryDirectory(dir=p.parent) as temp_dir:\n"
+            "            candidate = Path(temp_dir) / p.name\n"
+            "            bpy.ops.wm.save_as_mainfile(filepath=str(candidate), copy=True, relative_remap=False)\n"
+            "            with candidate.open('rb') as checkpoint_file:\n"
+            "                hdr = checkpoint_file.read(7)\n"
+            "            ok = candidate.stat().st_size > 1024 and (hdr[:7] == b'BLENDER' or hdr[:4] == b'\\x28\\xb5\\x2f\\xfd' or hdr[:2] == b'\\x1f\\x8b')\n"
+            "            if ok:\n"
+            "                candidate.replace(p)\n"
             "    print('__ORCH_JSON__:' + json.dumps({'saved': ok, 'path': str(p), 'bytes': p.stat().st_size if p.is_file() else 0}))\n"
         )
         return self._run_blender_util(adapter, code, stage_label=stage_label, user_prompt=user_prompt)
@@ -539,21 +625,23 @@ class AutonomousBlenderHarness:
         last_error = ""
         last_code = ""
         current_prompt = agent_prompt
-        pre_step_ckpt = run_dir / "checkpoints" / f"_pre_{stage_label}.blend"
-        if fallback_checkpoint is not None or stage_label != "stage_02_blockout":
-            try:
-                self._save_checkpoint(adapter, scene_name, pre_step_ckpt, f"pre_{stage_label}", user_prompt)
-            except Exception:
-                pass
-        effective_fallback = (
-            pre_step_ckpt
-            if (pre_step_ckpt.is_file() and pre_step_ckpt.stat().st_size > 100_000)
-            else fallback_checkpoint
-        )
-
+        effective_fallback = fallback_checkpoint
+        rollback_dir = tempfile.TemporaryDirectory(prefix="rollback_", dir=run_dir / "checkpoints")
+        pre_step_ckpt = Path(rollback_dir.name) / f"{stage_label}.blend"
         try:
+            if fallback_checkpoint is not None or stage_label != "stage_02_blockout":
+                saved = self._save_checkpoint(adapter, scene_name, pre_step_ckpt, f"pre_{stage_label}", user_prompt)
+                if saved.get("saved"):
+                    effective_fallback = pre_step_ckpt
+                elif fallback_checkpoint is None:
+                    raise ProductionBlockedError("Could not create a safe pre-edit checkpoint.")
+
             for attempt in range(1, max_code_retries + 1):
-                # Always use a fresh isolated session (`session_id=None`) on retries so previous bloated output isn't replayed in KV cache!
+                trace_path = scripts_dir / f"{stage_label}_attempt_{attempt}.json"
+                _write_json_atomic(trace_path, {
+                    "stage": stage_label, "attempt": attempt, "state": "awaiting_producer",
+                    "model_id": self.model_id, "role": "producer",
+                })
                 resp = self._invoke_agent(
                     self.model_id,
                     current_prompt,
@@ -576,9 +664,11 @@ class AutonomousBlenderHarness:
                         "timed_out": resp.get("timed_out", False),
                     }
                 )
-                q_info = resp.get("quota_blocked") or detect_quota_error(resp.get("errors"))
-                if q_info:
-                    raise QuotaBlockedError(q_info)
+                _write_json_atomic(trace_path, {
+                    **telemetry[-1], "state": "response_received", "model_id": self.model_id, "role": "producer",
+                    "errors": resp.get("errors"), "stderr": resp.get("stderr"),
+                })
+                _check_agent_health(resp)
                 if int(resp.get("returncode", 1)) != 0:
                     last_error = f"Agent CLI error rc={resp.get('returncode')}: {resp.get('errors')}"
                     current_prompt = (
@@ -624,6 +714,7 @@ class AutonomousBlenderHarness:
                     fallback_checkpoint=effective_fallback,
                     base_mesh_manifest=base_mesh_manifest,
                 )
+                _write_json_atomic(scripts_dir / f"{stage_label}_attempt_{attempt}_mcp.json", exec_res)
                 if exec_res.get("ok"):
                     return {
                         "ok": True,
@@ -634,6 +725,16 @@ class AutonomousBlenderHarness:
                     }
 
                 last_error = str(exec_res.get("traceback") or exec_res.get("error") or "Unknown Blender error")
+                if effective_fallback and not exec_res.get("rolled_back"):
+                    raise ProductionBlockedError(f"Blender rollback could not be verified after {stage_label}: {last_error[-600:]}")
+                if effective_fallback is None and stage_label == "stage_02_blockout":
+                    self._run_blender_util(
+                        adapter,
+                        f"bt.ensure_clean_scene({scene_name!r})\n"
+                        "print('__ORCH_JSON__:' + json.dumps({'reset': True}))\n",
+                        stage_label="stage_02_reset_failed_blockout",
+                        user_prompt=user_prompt,
+                    )
                 code_ctx = (
                     last_code
                     if len(last_code) <= 24000
@@ -653,10 +754,50 @@ class AutonomousBlenderHarness:
                 "audit": None,
             }
         finally:
-            try:
-                pre_step_ckpt.unlink(missing_ok=True)
-            except Exception:
-                pass
+            rollback_dir.cleanup()
+
+    def _plan_correction(
+        self,
+        *,
+        stage: str,
+        attempt: int,
+        run_dir: Path,
+        design_spec: str,
+        review: dict[str, Any],
+        best_review: dict[str, Any],
+        inventory: str,
+        images: list[Path],
+        telemetry: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        response = self._invoke_agent(
+            self.model_roles["supervisor"],
+            "Act as the Blender technical director. Review the attached views and the independent findings. "
+            "Choose one next action: repair one specific defect or stop. Never author code or change the goal. "
+            "In case of non-improvement, choose a different structural repair while preserving verified components. "
+            "Return one JSON object with decision (repair|stop), reason and, for repair, "
+            "target_object, defect, geometry_change, allowed_operations, expected_output, acceptance_criteria.\n"
+            f"Stage: {stage}\nDesign specification: {design_spec[:1500]}\n"
+            f"Scene: {inventory[:1800]}\nLatest QA: {json.dumps(review)[:2600]}\n"
+            f"Best score: {best_review.get('score')}\n",
+            files=images,
+            timeout_sec=self.stage_timeout_sec,
+            title=f"GPT supervision ({stage}, repair {attempt})",
+        )
+        plan = _extract_json_object(str(response.get("text") or "")) or {}
+        trace = {
+            "role": "supervisor", "model_id": self.model_roles["supervisor"], "stage": stage,
+            **{key: response.get(key) for key in ("session_id", "duration_sec", "returncode", "errors", "timed_out")},
+            "work_order": plan,
+        }
+        _write_json_atomic(run_dir / "handoffs" / f"{stage}_work_order_{attempt}.json", trace)
+        telemetry.append(trace)
+        _check_agent_health(response)
+        required = ("target_object", "defect", "geometry_change", "allowed_operations", "expected_output", "acceptance_criteria")
+        if response.get("returncode") != 0 or plan.get("decision") not in {"repair", "stop"} or (
+            plan["decision"] == "repair" and not all(plan.get(key) for key in required)
+        ):
+            raise ProductionBlockedError("The supervisor did not provide a valid repair decision.")
+        return plan
 
     def run_production(
         self,
@@ -677,6 +818,8 @@ class AutonomousBlenderHarness:
     ) -> dict[str, Any]:
         """Run one complete autonomous production cycle from a clean Blender session."""
         t0 = time.monotonic()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", asset_name):
+            raise ValueError("Asset name must contain only letters, digits, underscores and hyphens.")
         verify_model_id_lock(self.model_id, self.expected_model_id)
         is_base_mesh_mode = str(geometry_strategy).upper() == "BASE_MESH"
         base_mesh_prov: dict[str, Any] | None = None
@@ -695,12 +838,35 @@ class AutonomousBlenderHarness:
                 except Exception:
                     pass
 
+        run_dir = Path(run_dir).resolve()
+        ref_file = Path(approved_reference_path).resolve() if reference_mode == "REFERENCE_GUIDED" and approved_reference_path else None
+        if reference_mode == "REFERENCE_GUIDED" and (ref_file is None or not ref_file.is_file()):
+            raise ValueError("REFERENCE_GUIDED production requires the approved reference image.")
+        goal = {
+            "prompt": prompt, "asset_name": asset_name, "reference_mode": reference_mode,
+            "reference_sha256": hash_file_sha256(ref_file) if ref_file else None,
+            "geometry_strategy": geometry_strategy, "animation_mode": animation_mode,
+            "base_mesh_sha256": base_mesh_prov["sha256"] if base_mesh_prov else None,
+            "extra_guidance": extra_guidance,
+        }
+        resume_state: dict[str, Any] = {}
+        if resume_checkpoint is not None:
+            resume_state = _load_resume_state(run_dir, Path(resume_checkpoint), start_stage, goal)
+            if resume_state.get("models") != self.model_roles:
+                raise ValueError("Resume requires the same configured model roles.")
+        elif start_stage != 1:
+            raise ValueError("Starting after stage 1 requires a recorded resume checkpoint.")
+        elif run_dir.exists() and any(run_dir.iterdir()):
+            raise ValueError("Use an empty run directory or resume with a recorded checkpoint.")
         resource_before = collect_resource_snapshot()
         skill_char_budget = 1600 if is_base_mesh_mode else 3600
         api_cheatsheet = BASE_MESH_API_CHEATSHEET if is_base_mesh_mode else TOOLKIT_API_CHEATSHEET
         run_dir = Path(run_dir)
         handoffs_dir = run_dir / "handoffs"
         scripts_dir = run_dir / "scripts"
+        if resume_state:
+            attempt_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            scripts_dir /= attempt_id
         checkpoints_dir = run_dir / "checkpoints"
         renders_dir = run_dir / "renders"
         reviews_dir = run_dir / "reviews"
@@ -714,13 +880,11 @@ class AutonomousBlenderHarness:
             blender_port=self.blender_port,
         )
         pre_reset_report = None
-        if reset_blender_before_run:
-            pre_reset_report = resetter.reset_for_next_model(start_fresh_blender=True)
 
         scene_name = f"SCENE_{asset_name}"
         contracts: dict[str, SkillExecutionContract] = {}
-        agent_telemetry: list[dict[str, Any]] = []
-        producer_sessions: set[str] = set()
+        agent_telemetry: list[dict[str, Any]] = list(resume_state.get("agent_telemetry", []))
+        producer_sessions: set[str] = set(resume_state.get("producer_session_ids", []))
         stage_reviews: dict[str, list[dict[str, Any]]] = {}
         stage_summaries: dict[str, Any] = {}
 
@@ -741,7 +905,6 @@ class AutonomousBlenderHarness:
         # -------------------------------------------------------------------
         # STAGE 1: Reference Analysis & Structured Design Specification Agent
         # -------------------------------------------------------------------
-        ref_file = Path(approved_reference_path).resolve() if (reference_mode == "REFERENCE_GUIDED" and approved_reference_path and Path(approved_reference_path).is_file()) else None
         is_char_hint = director_plan["analysis"]["asset_type"] in ("character", "creature")
         primary_disc_skill = "character-artist" if director_plan["analysis"]["asset_type"] == "character" else (
             "creature-artist" if director_plan["analysis"]["asset_type"] == "creature" else "prop-artist"
@@ -754,7 +917,7 @@ class AutonomousBlenderHarness:
             s1_prompt = "\n".join(
                 [
                     "You are the Art Director Agent (Stage 1: Reference Analysis & Base Mesh Blueprint).",
-                    "Do NOT call any tools. Output ONLY one valid JSON object.",
+                    "Do not call tools. Output one compact JSON object with only essential values.",
                     f"User Request: {prompt}",
                     f"Asset Name: {asset_name} | Mode: {reference_mode} | Animation: {animation_mode}",
                     f"Approved Bundle Meshes Available: {available_base_mesh_names}",
@@ -785,7 +948,7 @@ class AutonomousBlenderHarness:
             s1_prompt = "\n".join(
                 [
                     "You are the Art Director & Blender Technical Director Agent (Stage 1: Reference Analysis & Design Specification).",
-                    "Do NOT call any tools, bash, or MCP servers. Output ONLY a single valid JSON object.",
+                    "Do not call tools. Output one compact JSON object with only essential values.",
                     f"User Request: {prompt}",
                     f"Asset Name: {asset_name} | Mode: {reference_mode} | Animation Mode: {animation_mode}",
                     f"Additional Optimization Guidance:\n{extra_guidance}" if extra_guidance else "",
@@ -816,37 +979,41 @@ class AutonomousBlenderHarness:
 
         quota_blocker: dict[str, Any] | None = None
         spec_file = handoffs_dir / "01_design_spec.json"
-        if start_stage > 1 and spec_file.is_file():
+        if resume_state:
             design_spec = json.loads(spec_file.read_text(encoding="utf-8"))
         else:
             s1_resp = self._invoke_agent(
-                self.model_id,
+                self.model_roles["supervisor"],
                 s1_prompt,
                 files=[ref_file] if ref_file else None,
                 timeout_sec=self.stage_timeout_sec,
                 title="Stage 1 Art Director Spec",
             )
-            if s1_resp.get("session_id"):
-                producer_sessions.add(s1_resp["session_id"])
-            agent_telemetry.append({"stage": "stage_01_design_spec", **{k: s1_resp.get(k) for k in ("session_id", "returncode", "duration_sec", "tokens", "compactions", "timed_out")}})
-            q1 = s1_resp.get("quota_blocked") or detect_quota_error(s1_resp.get("errors"))
-            if q1:
-                quota_blocker = q1
-                if reset_blender_after_run:
-                    resetter.reset_for_next_model(start_fresh_blender=False)
+            agent_telemetry.append({"stage": "stage_01_design_spec", "role": "supervisor", "model_id": self.model_roles["supervisor"], **{k: s1_resp.get(k) for k in ("session_id", "returncode", "duration_sec", "tokens", "compactions", "timed_out")}})
+            _write_json_atomic(handoffs_dir / "01_supervisor_attempt.json", {
+                **agent_telemetry[-1], "errors": s1_resp.get("errors"), "stderr": s1_resp.get("stderr"),
+            })
+            try:
+                _check_agent_health(s1_resp)
+                design_spec = _extract_json_object(str(s1_resp.get("text") or "")) or {}
+                if s1_resp.get("returncode") != 0 or s1_resp.get("errors") or not design_spec:
+                    raise ProductionBlockedError("The supervisor did not provide a usable design specification.")
+            except (QuotaBlockedError, ProductionBlockedError) as exc:
                 blocked_report = {
                     "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "git_revision": _git_head_sha(),
                     "model_id": self.model_id,
                     "status": "BLOCKED",
-                    "quota_blocker": quota_blocker,
+                    "models": self.model_roles,
+                    "execution_status": "STOPPED",
+                    "export_approved": False,
+                    "quota_blocker": getattr(exc, "quota_info", None),
                     "run_dir": str(run_dir),
                     "agent_telemetry": agent_telemetry,
-                    "final_evaluation": {"verdict": "NOT_VERIFIED", "passed": False, "reason": "Provider quota reached during Stage 1."},
+                    "final_evaluation": {"verdict": "NOT_VERIFIED", "passed": False, "reason": str(exc)},
                 }
-                (run_dir / "iteration_report.json").write_text(json.dumps(blocked_report, indent=2) + "\n", encoding="utf-8")
+                _write_json_atomic(run_dir / "iteration_report.json", blocked_report)
                 return blocked_report
-            design_spec = _extract_json_object(str(s1_resp.get("text") or "")) or {}
         if not design_spec.get("component_passes"):
             # Safe generic fallback structure if model omitted passes (still zero asset hardcoding)
             design_spec.setdefault("asset_type", director_plan["analysis"]["asset_type"])
@@ -858,7 +1025,8 @@ class AutonomousBlenderHarness:
                 {"pass_id": "pass_2_secondary_layers", "title": "Secondary Layers & Accessories", "skills": [primary_disc_skill, "sculpting"], "components": []},
                 {"pass_id": "pass_3_tertiary_hero_details", "title": "Tertiary Hero Details & Silhouettes", "skills": [primary_disc_skill, "hair-groom" if is_char_hint else "hard-surface"], "components": []},
             ]
-        spec_file.write_text(json.dumps(design_spec, indent=2) + "\n", encoding="utf-8")
+        if not resume_state:
+            _write_json_atomic(spec_file, design_spec)
         design_spec_md = str(design_spec.get("design_summary_markdown") or json.dumps(design_spec, indent=2)[:2000])
         (handoffs_dir / "01_design_spec.md").write_text(design_spec_md + "\n", encoding="utf-8")
         spec_compact = json.dumps(design_spec, indent=2)[: (2800 if is_base_mesh_mode else 5500)]
@@ -881,6 +1049,9 @@ class AutonomousBlenderHarness:
             "blend_saved": False,
             "glb_export_and_reimport": False,
         }
+        technical_gates.update(resume_state.get("technical_gates", {}))
+        execution_error: str | None = None
+        pipeline_completed = False
         final_eval: dict[str, Any] = {}
         export_res: dict[str, Any] = {}
         audit_latest: dict[str, Any] = {}
@@ -891,11 +1062,38 @@ class AutonomousBlenderHarness:
         def _save_good_ckpt(path: Path, label: str) -> dict[str, Any]:
             nonlocal last_good_checkpoint
             res = self._save_checkpoint(adapter, scene_name, path, label, prompt)
-            if res.get("saved") and path.is_file() and path.stat().st_size > 100_000:
+            if res.get("saved") and path.is_file():
                 last_good_checkpoint = path
             return res
 
+        approved_stage_reviews = dict(resume_state.get("approved_stage_reviews", {}))
+
+        def _record_stage(next_stage: int, review: dict[str, Any], *, modeling_pass: int = 0) -> None:
+            review_stage = {4: "detailed_modeling", 5: "materials_and_textures", 6: "rigging_and_animation"}.get(next_stage)
+            if review_stage and review.get("passed"):
+                approved_stage_reviews[review_stage] = review
+            checkpoint = checkpoints_dir / f"verified_before_stage_{next_stage:02d}_pass_{modeling_pass:02d}.blend"
+            if not _save_good_ckpt(checkpoint, f"verified_before_stage_{next_stage:02d}").get("saved"):
+                raise ProductionBlockedError(f"Could not save the checkpoint for stage {next_stage}.")
+            _write_json_atomic(run_dir / "production_state.json", {
+                "goal": goal, "git_revision": _git_head_sha(), "models": self.model_roles,
+                "next_stage": next_stage, "completed_modeling_passes": modeling_pass, "checkpoint": str(checkpoint),
+                "next_safe_action": f"Restore the recorded checkpoint and continue at stage {next_stage}.",
+                "checkpoint_sha256": hash_file_sha256(checkpoint),
+                "design_sha256": hash_file_sha256(spec_file),
+                "producer_session_ids": sorted(producer_sessions), "technical_gates": technical_gates,
+                "review": review, "approved_stage_reviews": approved_stage_reviews,
+                "scene_audit": audit_latest, "agent_telemetry": agent_telemetry,
+            })
+
         try:
+            if reset_blender_before_run:
+                try:
+                    pre_reset_report = resetter.reset_for_next_model(start_fresh_blender=True, preserve_backups=True)
+                except RuntimeError as exc:
+                    raise ProductionBlockedError(f"Managed Blender startup failed: {exc}") from exc
+                if not pre_reset_report.get("reset_passed"):
+                    raise ProductionBlockedError("Managed Blender setup did not pass its lifecycle checks.")
             caps = adapter.discover_capabilities()
             adapter.call_tool("get_addon_status", {"user_prompt": prompt}, stage="stage_01_addon_status")
             technical_gates["mcp_connected"] = True
@@ -903,7 +1101,7 @@ class AutonomousBlenderHarness:
             if last_good_checkpoint is not None and start_stage > 1:
                 load_res = self._run_blender_util(
                     adapter,
-                    f"bpy.ops.wm.open_mainfile(filepath={json.dumps(str(last_good_checkpoint))})\n"
+                    f"bpy.ops.wm.open_mainfile(filepath={json.dumps(str(last_good_checkpoint))}, use_scripts=False)\n"
                     f"s = bpy.data.scenes[{json.dumps(scene_name)}]\n"
                     "if bpy.context.window:\n"
                     "    bpy.context.window.scene = s\n"
@@ -913,10 +1111,8 @@ class AutonomousBlenderHarness:
                 )
                 technical_gates["scene_initialized"] = bool(load_res.get("ok"))
                 audit_latest = load_res.get("audit") or {}
-                if start_stage >= 3:
-                    technical_gates["blockout_created"] = audit_latest.get("mesh_count", 0) > 0
-                if start_stage >= 4:
-                    technical_gates["detailed_modeling_created"] = audit_latest.get("total_triangles", 0) > 500
+                if not technical_gates["scene_initialized"] or not audit_latest.get("mesh_count"):
+                    raise ProductionBlockedError("The resumed checkpoint did not load an asset in the expected Blender scene.")
             else:
                 init_res = self._run_blender_util(
                     adapter,
@@ -961,6 +1157,14 @@ class AutonomousBlenderHarness:
                             "Design Spec:\n" + spec_compact,
                         ]
                     )
+                elif not is_char_hint:
+                    s2_prompt = (
+                        "Build the first 3D Blender blockout of the asset in the locked design brief. "
+                        "Ground the asset at z=0, face -Y, and put a small number of cleanly named "
+                        "mesh objects in col_export. Preserve the silhouette and dimensions. "
+                        "Return a single fenced Python script. Do not use external tools.\n"
+                        + spec_compact + "\n" + api_cheatsheet
+                    )
                 else:
                     s2_prompt = "\n".join(
                         [
@@ -997,7 +1201,9 @@ class AutonomousBlenderHarness:
                 )
                 technical_gates["blockout_created"] = bool(s2_exec.get("ok") and (s2_exec.get("audit") or {}).get("mesh_count", 0) > 0)
                 audit_latest = s2_exec.get("audit") or {}
-                _save_good_ckpt(checkpoints_dir / "02_blockout_p0.blend", "stage_02_save")
+                if not technical_gates["blockout_created"]:
+                    raise ProductionBlockedError(f"Blockout failed: {s2_exec.get('error', 'no mesh evidence')}")
+                _record_stage(3, {})
 
                 blk_views = ["front", "three_quarter", "side", "rear", "closeup_top"] if is_base_mesh_mode else ["front", "three_quarter", "side", "rear"]
                 blk_r = self._render_views(
@@ -1014,10 +1220,6 @@ class AutonomousBlenderHarness:
                     fallback_checkpoint=last_good_checkpoint,
                 )
                 audit_latest = blk_r["audit"]
-                if not technical_gates["blockout_created"]:
-                    technical_gates["blockout_created"] = bool(
-                        audit_latest.get("mesh_count", 0) > 0 and audit_latest.get("total_triangles", 0) > 500
-                    )
                 anomalies_latest = blk_r.get("anomalies") or {}
                 prior_blk_renders = blk_r["render"]["renders"]
                 if is_base_mesh_mode:
@@ -1034,18 +1236,18 @@ class AutonomousBlenderHarness:
                     if lm_res.get("landmarks"):
                         landmarks_summary = json.dumps(lm_res["landmarks"], indent=2)[:1600]
                         (handoffs_dir / "02_anatomical_landmarks.json").write_text(json.dumps(lm_res["landmarks"], indent=2) + "\n", encoding="utf-8")
-                    blk_rev = self.stage_reviewer.review_stage(
-                        stage_name="blockout",
-                        renders=prior_blk_renders,
-                        design_spec_summary=design_spec_md,
-                        producer_session_ids=producer_sessions,
-                        approved_reference_path=ref_file,
-                        pass_threshold_score=75.0,
-                    )
-                    if blk_rev.get("quota_blocked"):
-                        raise QuotaBlockedError(blk_rev["quota_blocked"])
-                    stage_reviews["blockout"].append(blk_rev)
-                    (reviews_dir / "stage_02_blockout_p0.json").write_text(json.dumps(blk_rev, indent=2) + "\n", encoding="utf-8")
+                blk_rev = self.stage_reviewer.review_stage(
+                    stage_name="blockout",
+                    renders=prior_blk_renders,
+                    design_spec_summary=design_spec_md,
+                    producer_session_ids=producer_sessions,
+                    approved_reference_path=ref_file,
+                    pass_threshold_score=75.0,
+                )
+                if blk_rev.get("quota_blocked"):
+                    raise QuotaBlockedError(blk_rev["quota_blocked"])
+                stage_reviews["blockout"].append(blk_rev)
+                (reviews_dir / "stage_02_blockout_p0.json").write_text(json.dumps(blk_rev, indent=2) + "\n", encoding="utf-8")
             else:
                 blk_dir = renders_dir / "stage_02_blockout_p0"
                 if blk_dir.is_dir():
@@ -1057,6 +1259,11 @@ class AutonomousBlenderHarness:
             # -------------------------------------------------------------------
             # STAGE 3: Modular Detailed Modeling & Sculpting Passes + Clay QA Loop
             # -------------------------------------------------------------------
+            if start_stage <= 2:
+                state_path = run_dir / "production_state.json"
+                blockout_state = json.loads(state_path.read_text(encoding="utf-8"))
+                blockout_state["review"] = stage_reviews["blockout"][-1]
+                _write_json_atomic(state_path, blockout_state)
             stage_reviews["detailed_modeling"] = []
             prior_geo_renders: list[dict[str, Any]] = []
             if start_stage <= 3:
@@ -1103,11 +1310,13 @@ class AutonomousBlenderHarness:
                     ]
                 else:
                     passes = list(design_spec.get("component_passes") or [])[:2]
+                completed_passes = resume_state.get("completed_modeling_passes", 0) if start_stage == 3 else 0
                 for p_idx, pspec in enumerate(passes, start=1):
-                    pid = str(pspec.get("pass_id") or f"pass_{p_idx}")
-                    pass_ckpt = checkpoints_dir / f"03_pass_{p_idx}_{pid}.blend"
-                    if start_stage == 3 and resume_checkpoint is not None and pass_ckpt.is_file() and pass_ckpt.stat().st_size > 100_000:
+                    if p_idx <= completed_passes:
                         continue
+                    pid = str(pspec.get("pass_id") or f"pass_{p_idx}")
+                    if not re.fullmatch(r"[A-Za-z0-9_-]+", pid):
+                        raise ProductionBlockedError("The supervisor supplied an invalid modeling pass ID.")
                     pskills = list(pspec.get("skills") or [primary_disc_skill, "sculpting"])
                     if "sculpting" not in pskills:
                         pskills.append("sculpting")
@@ -1170,7 +1379,9 @@ class AutonomousBlenderHarness:
                     )
                     if p_exec.get("ok") and p_exec.get("audit"):
                         audit_latest = p_exec["audit"]
-                        _save_good_ckpt(checkpoints_dir / f"03_pass_{p_idx}_{pid}.blend", f"stage_03_save_{pid}")
+                        _record_stage(3, {}, modeling_pass=p_idx)
+                    else:
+                        raise ProductionBlockedError(f"Modeling pass {p_idx} did not execute successfully.")
 
                 technical_gates["detailed_modeling_created"] = bool(audit_latest.get("mesh_count", 0) > 0 and audit_latest.get("total_triangles", 0) > 500)
                 _save_good_ckpt(checkpoints_dir / "03_detailed_modeling_p0.blend", "stage_03_save")
@@ -1180,10 +1391,10 @@ class AutonomousBlenderHarness:
                 best_geo_score = -1.0
                 best_geo_mesh_count = 0
                 best_geo_blend = checkpoints_dir / "03_detailed_modeling_best.blend"
-                last_geo_tier = -1
                 last_geo_score = -1.0
-                last_geo_mesh_count = int(audit_latest.get("mesh_count", 0))
                 max_geo_fixes = min(2, self.max_stage_corrections)
+                best_geo_review: dict[str, Any] = {}
+                best_geo_iteration = -1
                 for fix_idx in range(0, max_geo_fixes + 1):
                     geo_r = self._render_views(
                         adapter,
@@ -1202,8 +1413,6 @@ class AutonomousBlenderHarness:
                     anomalies_latest = geo_r.get("anomalies") or {}
                     cur_renders = geo_r["render"]["renders"]
                     cur_tier, cur_meshes = _scene_completeness_tier(audit_latest)
-                    last_geo_tier = cur_tier
-                    last_geo_mesh_count = cur_meshes
                     rev = self.stage_reviewer.review_stage(
                         stage_name="detailed_modeling",
                         renders=cur_renders,
@@ -1223,14 +1432,18 @@ class AutonomousBlenderHarness:
                         cur_tier == best_geo_tier
                         and (
                             last_geo_score > best_geo_score
-                            or (last_geo_score == best_geo_score and cur_meshes >= best_geo_mesh_count)
+                            or (last_geo_score == best_geo_score and cur_meshes > best_geo_mesh_count
+                                and not best_geo_review.get("passed"))
                         )
                     )
                     if is_better_geo:
+                        best_geo_review = rev
+                        best_geo_iteration = fix_idx
                         best_geo_tier = cur_tier
                         best_geo_score = last_geo_score
                         best_geo_mesh_count = cur_meshes
-                        _save_good_ckpt(best_geo_blend, f"stage_03_save_best_{fix_idx}")
+                        if not _save_good_ckpt(best_geo_blend, f"stage_03_save_best_{fix_idx}").get("saved"):
+                            raise ProductionBlockedError("Could not save the selected detailed_modeling checkpoint.")
                     prior_geo_renders = cur_renders
                     if rev.get("passed") or fix_idx >= max_geo_fixes:
                         break
@@ -1239,12 +1452,20 @@ class AutonomousBlenderHarness:
                     geo_fix_files = compose_review_sheets(cur_renders)
                     if ref_file:
                         geo_fix_files.append(ref_file)
+                    work_order = self._plan_correction(
+                        stage="detailed_modeling", attempt=fix_idx + 1, run_dir=run_dir,
+                        design_spec=design_spec_md, review=rev, best_review=best_geo_review,
+                        inventory=_format_compact_scene_inventory(audit_latest, anomalies_latest),
+                        images=geo_fix_files, telemetry=agent_telemetry,
+                    )
+                    if work_order["decision"] == "stop":
+                        break
                     gfix_prompt = "\n".join(
                         [
                             f"You are the Structural 3D Geometry Refinement Agent (Stage 3 Fix Pass {fix_idx + 1}/{max_geo_fixes}).",
                             "Do NOT call any tools. Inspect the attached clay contact sheets and reference image carefully.",
                             "CRITICAL FIX RULES:",
-                            "- Execute REAL 3D mesh/sculpt/topology fixes ONLY on the defective components listed below AND any GEOMETRY_ANOMALIES_TO_FIX.",
+                            "- Execute only the geometry correction assigned in the GPT work order. Treat unrelated QA findings as context.",
                             "- ALWAYS delete old defective meshes (`bt.remove_object_if_exists(...)`) BEFORE building replacements — NEVER stack duplicate eyelids, duplicate sleeves, or overlapping patches!",
                             "- NEVER build primitive cylinder/cube `SM_Hand_L/R` replacements or raw-cube `SM_Prop_RunicSlate`, and NEVER assign per-polygon multi-material splits onto `SM_Tunic_Bodice`/`SM_Tunic_Skirt`/`SM_BaseBody`!",
                             "- Eliminate ANY double sleeves, elbow socket seams, oversized forehead/excessive downward head pitch, floating fragments, needle spikes, coplanar Z-fighting overlays, eye-occluding hair cards, studio walls/lights, or floating feet (ensure `min_z ≈ 0.0`).",
@@ -1262,7 +1483,8 @@ class AutonomousBlenderHarness:
                         run_dir=run_dir,
                         stage_label=f"stage_03_geometry_fix_{fix_idx + 1}",
                         user_prompt=prompt,
-                        agent_prompt=gfix_prompt,
+                        agent_prompt=gfix_prompt + "\nGPT work order (limit edits to this scope):\n"
+                        + json.dumps(work_order),
                         attach_files=geo_fix_files,
                         telemetry=agent_telemetry,
                         producer_sessions=producer_sessions,
@@ -1274,10 +1496,7 @@ class AutonomousBlenderHarness:
                         break
                     _save_good_ckpt(checkpoints_dir / f"03_detailed_modeling_fix{fix_idx + 1}.blend", f"stage_03_save_fix_{fix_idx + 1}")
 
-                can_restore_best = best_geo_blend.is_file() and (
-                    best_geo_tier > last_geo_tier
-                    or (best_geo_tier == last_geo_tier and last_geo_score < best_geo_score)
-                )
+                can_restore_best = best_geo_blend.is_file() and best_geo_iteration != fix_idx
                 if can_restore_best:
                     restored_geo = self._run_blender_util(
                         adapter,
@@ -1311,6 +1530,10 @@ class AutonomousBlenderHarness:
             # -------------------------------------------------------------------
             # STAGE 4: UV, Procedural Texture, Material & Lookdev Agent + Color QA Loop
             # -------------------------------------------------------------------
+            if start_stage <= 3:
+                if not technical_gates["detailed_modeling_created"] or not best_geo_review.get("passed"):
+                    raise ProductionBlockedError("Independent modeling QA did not pass. Retained diagnostic geometry.")
+                _record_stage(4, best_geo_review)
             stage_reviews["materials_and_textures"] = []
             prior_look_renders: list[dict[str, Any]] = []
             if start_stage <= 4:
@@ -1337,6 +1560,14 @@ class AutonomousBlenderHarness:
                         api_cheatsheet,
                     ]
                 )
+                if not is_base_mesh_mode:
+                    s4_prompt = (
+                        "Finish UVs and assign PBR materials to the existing asset according to the locked design. "
+                        "Preserve the approved silhouettes and geometry. Do not create new cameras, lights or studio props. "
+                        "Return one fenced Blender Python script without invoking tools.\n"
+                        + spec_compact + "\n" + _format_compact_scene_inventory(audit_latest, anomalies_latest)
+                        + "\n" + api_cheatsheet
+                    )
                 s4_exec = self._run_code_agent_with_retry(
                     adapter=adapter,
                     scene_name=scene_name,
@@ -1360,10 +1591,11 @@ class AutonomousBlenderHarness:
                 best_look_score = -1.0
                 best_look_mesh_count = 0
                 best_look_blend = checkpoints_dir / "04_lookdev_best.blend"
-                last_look_tier = -1
                 last_look_score = -1.0
                 max_look_fixes = min(2, self.max_stage_corrections)
 
+                best_look_review: dict[str, Any] = {}
+                best_look_iteration = -1
                 for fix_idx in range(0, max_look_fixes + 1):
                     look_r = self._render_views(
                         adapter,
@@ -1382,7 +1614,6 @@ class AutonomousBlenderHarness:
                     anomalies_latest = look_r.get("anomalies") or {}
                     cur_renders = look_r["render"]["renders"]
                     cur_look_tier, cur_look_meshes = _scene_completeness_tier(audit_latest)
-                    last_look_tier = cur_look_tier
                     rev = self.stage_reviewer.review_stage(
                         stage_name="materials_and_textures",
                         renders=cur_renders,
@@ -1401,14 +1632,18 @@ class AutonomousBlenderHarness:
                         cur_look_tier == best_look_tier
                         and (
                             last_look_score > best_look_score
-                            or (last_look_score == best_look_score and cur_look_meshes >= best_look_mesh_count)
+                            or (last_look_score == best_look_score and cur_look_meshes > best_look_mesh_count
+                                and not best_look_review.get("passed"))
                         )
                     )
                     if is_better_look:
+                        best_look_review = rev
+                        best_look_iteration = fix_idx
                         best_look_tier = cur_look_tier
                         best_look_score = last_look_score
                         best_look_mesh_count = cur_look_meshes
-                        _save_good_ckpt(best_look_blend, f"stage_04_save_best_{fix_idx}")
+                        if not _save_good_ckpt(best_look_blend, f"stage_04_save_best_{fix_idx}").get("saved"):
+                            raise ProductionBlockedError("Could not save the selected materials_and_textures checkpoint.")
                     prior_look_renders = cur_renders
                     if rev.get("passed") or fix_idx >= max_look_fixes:
                         break
@@ -1417,11 +1652,19 @@ class AutonomousBlenderHarness:
                     lfix_files = compose_review_sheets(cur_renders)
                     if ref_file:
                         lfix_files.append(ref_file)
+                    work_order = self._plan_correction(
+                        stage="materials_and_textures", attempt=fix_idx + 1, run_dir=run_dir,
+                        design_spec=design_spec_md, review=rev, best_review=best_look_review,
+                        inventory=_format_compact_scene_inventory(audit_latest, anomalies_latest),
+                        images=lfix_files, telemetry=agent_telemetry,
+                    )
+                    if work_order["decision"] == "stop":
+                        break
                     lfix_prompt = "\n".join(
                         [
                             f"You are the Senior Lookdev, Texture & Form Polish Agent (Stage 4 Fix Pass {fix_idx + 1}/{self.max_stage_corrections}).",
                             "Do NOT call any tools. Compare the attached full-color contact sheets directly against the reference image / design specification.",
-                            "Fix ALL CRITICAL and MAJOR defects reported below — refine 3D geometry/hair/eyes/garments/accessories AND painted textures/UVs/PBR materials using `bt.make_pbr_material(..., surface_type=...)` and `bt.create_painted_image_texture('T_RunicSlate_Rune', size=1024, base_hex='#181C24', accent_hex='#30E8FF', pattern='rune_lens')`!",
+                            "Apply only the GPT work order. When a material change is assigned, use `bt.make_pbr_material(..., surface_type=...)` and `bt.create_painted_image_texture('T_RunicSlate_Rune', size=1024, base_hex='#181C24', accent_hex='#30E8FF', pattern='rune_lens')`!",
                             "NEVER overwrite skin with pale white `(0.90, ...)` linear values (keep warm peach `#E8B088` + `surface_type='skin'`), NEVER paste unnamed `Cylinder`/`Cube` geometry runes onto the slate, NEVER match `SM_Belt_Buckle` as leather (keep gold), NEVER delete/collapse SM_BaseBody hands, NEVER build primitive SM_Hand_L/R or raw-cube SM_Prop_RunicSlate, and NEVER paint multi-material per-polygon cutouts onto SM_Tunic_Bodice, SM_Tunic_Skirt, or SM_BaseBody!",
                             "Preserve all good unaffected objects in `col_export`.",
                             f"Verified Landmarks:\n{landmarks_summary}" if landmarks_summary else "",
@@ -1438,7 +1681,8 @@ class AutonomousBlenderHarness:
                         run_dir=run_dir,
                         stage_label=f"stage_04_lookdev_fix_{fix_idx + 1}",
                         user_prompt=prompt,
-                        agent_prompt=lfix_prompt,
+                        agent_prompt=lfix_prompt + "\nGPT work order (limit edits to this scope):\n"
+                        + json.dumps(work_order),
                         attach_files=lfix_files,
                         telemetry=agent_telemetry,
                         producer_sessions=producer_sessions,
@@ -1451,10 +1695,7 @@ class AutonomousBlenderHarness:
                     _save_good_ckpt(checkpoints_dir / f"04_lookdev_fix{fix_idx + 1}.blend", f"stage_04_save_fix_{fix_idx + 1}")
 
                 # Retain best lookdev checkpoint if final edit regressed or dropped components
-                can_restore_best_look = best_look_blend.is_file() and (
-                    best_look_tier > last_look_tier
-                    or (best_look_tier == last_look_tier and last_look_score < best_look_score)
-                )
+                can_restore_best_look = best_look_blend.is_file() and best_look_iteration != fix_idx
                 if can_restore_best_look:
                     restored_look = self._run_blender_util(
                         adapter,
@@ -1515,9 +1756,13 @@ class AutonomousBlenderHarness:
             # -------------------------------------------------------------------
             # STAGE 5: Rigging & Animation Validation (when required)
             # -------------------------------------------------------------------
-            need_rig = bool(design_spec.get("requires_rigging")) or animation_mode in ("rigged", "animated")
-            need_anim = bool(design_spec.get("requires_animation")) or animation_mode == "animated"
-            if need_rig:
+            if start_stage <= 4:
+                if not technical_gates["materials_and_uvs_applied"] or not best_look_review.get("passed"):
+                    raise ProductionBlockedError("Lookdev and UV gates must pass before rigging or export.")
+                _record_stage(5, best_look_review)
+            need_rig = animation_mode in ("rigged", "animated")
+            need_anim = animation_mode == "animated"
+            if need_rig and start_stage <= 5:
                 s5_skills = ["rigging"] + (["animation"] if need_anim else [])
                 s5_skill_ctx = self._load_skills_context(s5_skills, contracts, max_chars_per_skill=skill_char_budget)
                 s5_prompt = "\n".join(
@@ -1636,10 +1881,19 @@ class AutonomousBlenderHarness:
             # -------------------------------------------------------------------
             # STAGE 6: Final Render Suite, GLB Export/Reimport & Blind 100-Pt Eval
             # -------------------------------------------------------------------
+            if start_stage <= 5:
+                rig_review = (stage_reviews.get("rigging_and_animation") or [{}])[-1]
+                if not (technical_gates["rig_validated"] and technical_gates["animation_validated"]) or (
+                    need_anim and not rig_review.get("passed")
+                ):
+                    raise ProductionBlockedError("Rigging or animation validation did not pass.")
+                _record_stage(6, rig_review)
             self._load_skills_context(["rendering", "asset-optimization", "export-pipeline", "qa-review"], contracts)
 
             final_blend = final_dir / f"{asset_name}.blend"
-            final_glb = final_dir / f"{asset_name}.glb"
+            diagnostics = run_dir / "diagnostics"
+            diagnostics.mkdir(exist_ok=True)
+            final_glb = diagnostics / f"{asset_name}.glb"
             blend_res = _save_good_ckpt(final_blend, "stage_06_save_final_blend")
             technical_gates["blend_saved"] = bool(blend_res.get("saved"))
 
@@ -1714,6 +1968,11 @@ class AutonomousBlenderHarness:
                     c.validation_evidence = [f"glb_valid={technical_gates['glb_export_and_reimport']}"]
                     evaluate_skill_contract(c)
 
+            if final_eval.get("passed") and all_tech_ok:
+                approved_glb = final_dir / final_glb.name
+                final_glb.replace(approved_glb)
+                export_res["approved_path"] = str(approved_glb)
+            pipeline_completed = True
             stage_summaries = {
                 "blockout_passes": len(stage_reviews.get("blockout", [])),
                 "geometry_passes": len(stage_reviews.get("detailed_modeling", [])),
@@ -1728,15 +1987,22 @@ class AutonomousBlenderHarness:
                 "reason": str(qexc),
                 "quota_blocker": quota_blocker,
             }
+        except (ProductionBlockedError, MCPAdapterError, subprocess.TimeoutExpired) as exc:
+            execution_error = str(exc)
+            final_eval = {"verdict": "NOT_VERIFIED", "passed": False, "reason": execution_error}
         finally:
             adapter.close()
 
         post_reset_report = None
         if reset_blender_after_run:
-            post_reset_report = resetter.reset_for_next_model(
-                expected_saved_files=[final_dir / f"{asset_name}.blend"] if quota_blocker is None else [],
-                start_fresh_blender=False,
-            )
+            try:
+                post_reset_report = resetter.reset_for_next_model(
+                    expected_saved_files=[final_dir / f"{asset_name}.blend"] if technical_gates["blend_saved"] else [],
+                    start_fresh_blender=False,
+                    preserve_backups=True,
+                )
+            except RuntimeError as exc:
+                post_reset_report = {"reset_passed": False, "error": str(exc)}
 
         total_runtime = round(time.monotonic() - t0, 2)
         resource_after = collect_resource_snapshot()
@@ -1759,7 +2025,11 @@ class AutonomousBlenderHarness:
             "model_id": self.model_id,
             "geometry_strategy": str(geometry_strategy).upper(),
             "base_mesh_provenance": base_mesh_prov,
-            "status": "BLOCKED" if quota_blocker else ("PASS" if final_eval.get("passed") else "FAIL"),
+            "status": "BLOCKED" if quota_blocker or execution_error else ("PASS" if final_eval.get("passed") else "FAIL"),
+            "models": self.model_roles,
+            "execution_status": "COMPLETED" if pipeline_completed else "STOPPED",
+            "export_approved": bool(export_res.get("approved_path")),
+            "resume_state": str(run_dir / "production_state.json") if (run_dir / "production_state.json").is_file() else None,
             "quota_blocker": quota_blocker,
             "last_good_checkpoint": str(last_good_checkpoint) if last_good_checkpoint else None,
             "asset_name": asset_name,
@@ -1792,5 +2062,5 @@ class AutonomousBlenderHarness:
             "post_reset": post_reset_report,
             "agent_telemetry": agent_telemetry,
         }
-        (run_dir / "iteration_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        _write_json_atomic(run_dir / "iteration_report.json", report)
         return report

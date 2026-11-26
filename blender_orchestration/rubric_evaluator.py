@@ -654,10 +654,25 @@ class StageVisualReviewer:
                 "defects": [],
                 "reason": "Stage reviewer returned unparseable output.",
             }
-        score = max(0.0, min(100.0, float(parsed.get("stage_score_100", 0.0))))
+        observations = parsed.get("observations_by_view")
+        if not isinstance(observations, dict) or not any(
+            isinstance(notes, list) and any(isinstance(note, str) and note.strip() for note in notes)
+            for notes in observations.values()
+        ):
+            return {
+                "verdict": "NOT_VERIFIED", "passed": False, "score": 0.0,
+                "reviewer_session_id": sid, "defects": [],
+                "reason": "Stage reviewer did not report visual observations for the rendered views.",
+            }
+        try:
+            score = float(parsed.get("stage_score_100", 0.0))
+        except (ValueError, TypeError):
+            score = 0.0
+        if not 0.0 <= score <= 100.0:
+            score = 0.0
         defects = [_normalize_defect(d, image_paths[0].name).to_dict() for d in (parsed.get("defects") or []) if isinstance(d, dict)]
         has_critical = any(d["severity"] == "CRITICAL" for d in defects)
-        passed = bool(parsed.get("passed", False)) and (not has_critical) and (score >= pass_threshold_score)
+        passed = parsed.get("passed") is True and not has_critical and score >= pass_threshold_score
         return {
             "verdict": "PASS" if passed else "FAIL",
             "passed": passed,
@@ -666,7 +681,8 @@ class StageVisualReviewer:
             "reviewer_session_id": sid,
             "duration_sec": raw.get("duration_sec"),
             "tokens": raw.get("tokens") or {},
-            "observations_by_view": parsed.get("observations_by_view") or {},
+            "observations_by_view": observations,
+            "image_evidence": [{"path": str(path), "sha256": hash_file_sha256(path)} for path in attach],
             "defects": defects,
             "summary": str(parsed.get("summary") or ""),
         }
