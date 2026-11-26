@@ -67,6 +67,8 @@ Both arms have a bounded reference-analysis retry on the current revision: the p
 
 The subsequent controlled pair uses a common upper bound of four technical attempts per edit (separate from the unchanged budget of three visual corrections). Each retry gets the exact prior source plus the accumulated errors, rather than discarding the script when a syntax error could be fixed locally. The producer prompt spells out the exact loader return keys, vertex-group membership API, and material argument names. No supervisor-authored correction script is executed.
 
+On that revision the focused suite, including isolated live MCP, passed **36 tests**. The compatible suite passed **101 tests** with one opt-in skip and the same historical evidence failure, recorded in `output/zelda-v3-safe-tests-retries-20261126.log`. The new sequential pair uses `output/zelda-v3-controlled-base_mesh-20261126-191851/` (19885) and `output/zelda-v3-controlled-from_scratch-20261126-191851/` (19886), with the common arguments above and no historical checkpoints.
+
 | Evaluation, completed original pair | FROM_SCRATCH | BASE_MESH |
 |---|---|---|
 | Silhouette, anatomy, head/body ratio, shoulder/torso and limb proportions | Not measured | Not measured |
