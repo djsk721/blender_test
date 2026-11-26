@@ -146,6 +146,12 @@ class BlenderExecutor:
             "print('__ORCH_JSON__:' + json.dumps({'ok': True, 'scene': s.name, 'audit': bt.get_scene_audit(s)}))\n",
             label="init_scene")
 
+    def inspect_base_mesh(self, source):
+        return self.util(
+            'from blender_orchestration import base_mesh_ops as bmo\n'
+            f'r = bmo.inspect_library_selection({source["blend_path"]!r}, {source["object_name"]!r})\n'
+            "print('__ORCH_JSON__:' + json.dumps(r))\n", label='inspect_approved_base_mesh')
+
     def load_checkpoint(self, checkpoint_id: str) -> dict[str, Any]:
         entry = self.checkpoints.verify(checkpoint_id)
         res = self.util(
@@ -170,7 +176,7 @@ class BlenderExecutor:
             label=f"save_{stage}_{label}")
         if not res.get("saved") or not is_blend_file(path):
             raise MCPAdapterError(f"checkpoint save failed for {stage}/{label}")
-        return self.checkpoints.register(path, stage=stage, label=label, kind=kind)
+        return self.checkpoints.register(path, stage=stage, label=label, kind=kind, extra=self.ledger.geometry)
 
     # -- producer execution -------------------------------------------------
     def execute_producer_script(self, code: str, record: ProvenanceRecord, *, phase: str,
@@ -184,6 +190,37 @@ class BlenderExecutor:
         ckpt_path = ""
         if rollback_checkpoint_id:
             ckpt_path = self.checkpoints.verify(rollback_checkpoint_id).path
+        source = self.ledger.geometry.get('base_mesh')
+        base_setup = (
+            'from blender_orchestration import base_mesh_ops as bmo\n'
+            f'_source = {source!r}\n'
+            '_body = col_export.all_objects.get("SM_BaseBody")\n'
+            '_base = {"object": _body, "before": bmo.body_structure(_body)} if _body else {}\n'
+            'def load_approved_body():\n'
+            '    if _base or PHASE != "silhouette" or _CKPT:\n'
+            '        raise RuntimeError("Approved body can only be loaded once in the initial silhouette edit")\n'
+            '    loaded = bmo.verify_and_load_base_mesh(scene, _source["manifest_path"], _source["object_name"],\n'
+            '        collection=col_export, expected_source=_source)\n'
+            '    _base.update(object=loaded["object"], before=bmo.body_structure(loaded["object"]), loaded=True)\n'
+            '    return loaded\n'
+            '_ns.update(bmo=bmo, load_approved_body=load_approved_body)\n'
+        ) if source else ''
+        base_check = (
+            '    _body = col_export.all_objects.get("SM_BaseBody")\n'
+            '    if not _base or _body is None or _body != _base["object"] or _body.type != "MESH":\n'
+            '        raise RuntimeError("Expected the verified SM_BaseBody in COL_Export; preserve the imported body object")\n'
+            '    if PHASE == "silhouette" and not _CKPT and not _base.get("loaded"):\n'
+            '        raise RuntimeError("Initial silhouette must load the pinned source using load_approved_body()")\n'
+            '    _old, _new = _base["before"], bmo.body_structure(_body)\n'
+            '    _changed = _new["shape_sha256"] != _old["shape_sha256"]\n'
+            '    if _base.get("loaded") and not _changed:\n'
+            '        raise RuntimeError("Approved body was loaded but its vertex geometry was not transformed")\n'
+            '    if not _new["polygons"] or any(_new[k] > _old[k] for k in ("components", "boundary_edges",\n'
+            '            "non_manifold_edges", "inconsistent_winding_edges", "degenerate_faces")):\n'
+            '        raise RuntimeError("Base body topology regressed: " + str({"before": _old, "after": _new}))\n'
+            '    _base_evidence = {"source": _source, "object": _body.name, "loaded": bool(_base.get("loaded")),\n'
+            '                      "changed": _changed, "before": _old, "after": _new}\n'
+        ) if source else ''
         wrapper = (
             _PRELUDE.format(root=str(self.project_root))
             + self._scene_expr()
@@ -196,6 +233,8 @@ class BlenderExecutor:
             "_ns = {'bpy': bpy, 'bmesh': bmesh, 'bt': bt, 'math': math, 'json': json, 'Vector': Vector,\n"
             "       'Euler': Euler, 'Matrix': Matrix, 'scene': scene, 'col_export': col_export, 'col_rig': col_rig,\n"
             "       'SCENE_NAME': _SN, 'PHASE': PHASE}\n"
+            + base_setup
+            + "_base_evidence = None\n_base_attempt = None\n"
             "try:\n"
             "    exec(compile(_user_code, 'producer_script.py', 'exec'), _ns)\n"
             "    scene = bpy.data.scenes[_SN]\n"
@@ -203,9 +242,12 @@ class BlenderExecutor:
             "    _guard = bc.geometry_guard(scene, _before)\n"
             "    if not _guard['ok']:\n"
             "        raise RuntimeError('geometry guard: ' + '; '.join(_guard['problems']))\n"
-            "    print('__ORCH_JSON__:' + json.dumps({'ok': True, 'audit': bt.get_scene_audit(scene), 'guard': _guard,\n"
+            + base_check
+            + "    print('__ORCH_JSON__:' + json.dumps({'ok': True, 'base_mesh': _base_evidence, 'audit': bt.get_scene_audit(scene), 'guard': _guard,\n"
             "          'relinked': _moved, 'landmarks': _ns.get('LANDMARKS') if isinstance(_ns.get('LANDMARKS'), dict) else None}, default=str))\n"
             "except Exception as _exc:\n"
+            "    if globals().get('_base', {}).get('loaded'):\n"
+            "        _base_attempt = {'source': _source, 'loaded': True, 'before': _base['before']}\n"
             "    _tb = traceback.format_exc()[-1800:]\n"
             "    _rb = False\n"
             "    _same = False\n"
@@ -217,7 +259,7 @@ class BlenderExecutor:
             "        except Exception:\n"
             "            pass\n"
             "    print('__ORCH_JSON__:' + json.dumps({'ok': False, 'error': str(_exc)[:900], 'traceback': _tb,\n"
-            "          'rolled_back': _rb, 'scene_unchanged': _same}))\n"
+            "          'rolled_back': _rb, 'scene_unchanged': _same, 'base_mesh_attempt': _base_attempt}))\n"
         )
         try:
             res = self.adapter.execute_blender_json(wrapper, user_prompt=f"producer:{phase}", stage=f"producer_{phase}")["parsed"]
@@ -251,11 +293,14 @@ class BlenderExecutor:
             "print('__ORCH_JSON__:' + json.dumps({'render': r}, default=str))\n",
             label=f"render_{prefix}")
 
-    def export_glb(self, path: Path) -> dict[str, Any]:
+    def export_glb(self, path: Path, *, mode: str) -> dict[str, Any]:
         return self.util(
             self._scene_expr()
             + "for o in scene.objects:\n    if o.type == 'ARMATURE':\n        o.data.pose_position = 'POSE'\n"
-            f"res = bt.export_and_verify_glb(scene, {str(path)!r})\n"
+            "bpy.context.view_layer.update()\n"
+            "source = bc.character_export_inventory(bc._export_meshes(scene))\n"
+            f"res = bt.export_and_verify_glb(scene, {str(path)!r}, verify_reimport=lambda fresh: "
+            f"bc.compare_character_export(source, bc.character_export_inventory(fresh.objects), {mode!r}))\n"
             "for o in scene.objects:\n    if o.type == 'ARMATURE':\n        o.data.pose_position = 'REST'\n"
             "print('__ORCH_JSON__:' + json.dumps(res, default=str))\n",
             label="export_glb")

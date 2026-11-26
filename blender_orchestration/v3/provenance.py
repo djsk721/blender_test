@@ -77,8 +77,9 @@ class ProvenanceRecord:
 class ProvenanceLedger:
     """Append-only provenance log (``provenance.jsonl``) plus an execution authorization check."""
 
-    def __init__(self, roles: ModelRoles, log_path: Path | None = None) -> None:
+    def __init__(self, roles: ModelRoles, log_path: Path | None = None, *, geometry=None) -> None:
         self.roles = roles
+        self.geometry = geometry or {'geometry_strategy': 'FROM_SCRATCH'}
         self.log_path = Path(log_path) if log_path else None
         self._records: dict[str, ProvenanceRecord] = {}
         self._responses: dict[str, str] = {}
@@ -110,7 +111,7 @@ class ProvenanceLedger:
         )
         self._records[rec.record_id] = rec
         self._responses[rec.record_id] = response_text
-        self._append({"kind": "provenance", "record": rec.to_dict()})
+        self._append({"kind": "provenance", "record": rec.to_dict(), "geometry": self.geometry})
         return rec
 
     def authorize_execution(self, code: str, record: ProvenanceRecord | None) -> ProvenanceRecord:
@@ -124,7 +125,8 @@ class ProvenanceLedger:
             raise RoleViolationError(f"Execution refused: code authored by role={record.role} model={record.model_id}.")
         if sha256_text(code) != record.code_sha256:
             raise RoleViolationError("Execution refused: code differs from the producer-authored code.")
-        self._append({"kind": "authorized", "record_id": record.record_id, "code_sha256": record.code_sha256})
+        self._append({"kind": "authorized", "record_id": record.record_id, "code_sha256": record.code_sha256,
+                      "geometry": self.geometry})
         return record
 
     def records(self) -> list[ProvenanceRecord]:

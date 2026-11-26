@@ -12,6 +12,7 @@ from ..rubric_evaluator import BlindRubricEvaluator, FROZEN_MIN_TOTAL_SCORE
 from .checkpoints import CheckpointManager, sha256_file, validate_state_against_registry, write_json_atomic
 from .agents import response_failure
 from .correction import CorrectionController
+from .geometry import BASE_BRIEF, BASE_FIRST_EDIT, resolve_geometry
 from .provenance import ProvenanceLedger, sha256_text
 from .reviewer import IndependentReviewer, _extract_json
 from .script_validator import extract_python_block
@@ -36,20 +37,24 @@ class Blocked(RuntimeError):
 
 class Production:
     def __init__(self, *, run, root, goal, manifest, roles, mode, invoke, budget,
-                 timeout, samples, resume=None, asset='Character', port=None):
+                 timeout, samples, resume=None, asset='Character', port=None, geometry_strategy='FROM_SCRATCH',
+                 base_mesh_manifest=None, base_mesh_name=None):
         self.run, self.root, self.goal, self.roles = run, root, goal, roles
         if not goal.strip():
             raise ValueError('Empty production goal')
         self.mode, self.invoke, self.budget = mode, invoke, budget
         self.timeout, self.samples, self.asset = timeout, samples, asset
+        self.geometry = resolve_geometry(geometry_strategy, base_mesh_manifest, base_mesh_name)
+        self.base_source = self.geometry.get('base_mesh')
+        self.base_context = ''
         self.identity = {'goal_sha256': sha256_text(goal), 'models': roles.to_dict(),
                          'references': manifest.to_dict(), 'animation_mode': mode, 'asset': asset,
-                         'geometry_strategy': 'FROM_SCRATCH', 'reference_mode': 'REFERENCE_GUIDED',
+                         **self.geometry, 'reference_mode': 'REFERENCE_GUIDED',
                          'correction_budget': budget, 'blender_port': port}
         if resume is None and run.exists() and any(run.iterdir()):
             raise ValueError('Fresh production requires an empty run directory')
         self.manager = CheckpointManager(run)
-        self.provenance = ProvenanceLedger(roles, run / 'provenance.jsonl')
+        self.provenance = ProvenanceLedger(roles, run / 'provenance.jsonl', geometry=self.geometry)
         self.state_path = run / 'production_state.json'
         self.refs_path = run / 'references' / 'reference_manifest.json'
         self.plan_path = run / 'handoffs' / 'plan.json'
@@ -65,6 +70,11 @@ class Production:
                 raise ValueError('Resume identity mismatch')
             if validate_state_against_registry(state, self.manager):
                 raise ValueError('Resume checkpoint registry/hash mismatch')
+            for cid in state['checkpoint_hashes']:
+                extra = self.manager.entries[cid].extra
+                # Pre-integration FROM_SCRATCH entries lack this metadata.
+                if (extra or self.base_source) and extra != self.geometry:
+                    raise ValueError(f'Resume checkpoint geometry identity mismatch: {cid}')
             self.approved = state.get('approved_checkpoint_id', state['resume_checkpoint_id'])
             self.pending = state.get('pending_review')
             if Path(self.manager.verify(state['resume_checkpoint_id']).path) != resume.resolve():
@@ -132,12 +142,20 @@ class Production:
 
     def plan(self):
         d = self.run / 'handoffs'
-        raw = self.call('producer', reference_analysis_prompt(self.goal, self.lines, self.overlaps), self.files, d / 'reference_analysis')
-        analysis = _extract_json(raw['text'])
-        if not analysis or len(analysis.get('per_reference', [])) < len(self.files):
-            raise Blocked('Reference analysis did not account for the complete image set')
+        prompt = reference_analysis_prompt(self.goal, self.lines, self.overlaps)
+        expected = sorted(p.name for p in self.files)
+        for attempt in ('reference_analysis', 'reference_analysis_retry'):
+            raw = self.call('producer', prompt, self.files, d / attempt)
+            analysis = _extract_json(raw['text']) or {}
+            entries = analysis.get('per_reference')
+            names = sorted(str(e.get('file', '')) for e in entries if isinstance(e, dict)) if isinstance(entries, list) else []
+            if names == expected:
+                break
+            prompt += '\nYour previous response was invalid JSON or omitted required filenames. Produce compact valid JSON and list each exact filename once.'
+        else:
+            raise Blocked('Reference analysis was invalid JSON or did not account for the complete image set after retry')
         write_json_atomic(d / 'reference_analysis.json', analysis)
-        prompt = plan_work_order(self.goal, self.lines, json.dumps(analysis)) + self.skills('plan')
+        prompt = plan_work_order(self.goal, self.lines, json.dumps(analysis)) + self.skills('plan') + self.base_context
         raw = self.call('producer', prompt, self.files, d / 'producer_plan')
         plan = _extract_json(raw['text'])
         keys = ('target_proportions', 'structural_geometry', 'face_landmarks', 'hair_masses', 'costume_layers',
@@ -241,6 +259,9 @@ class Production:
                 prompt = build_phase_work_order(phase=stage, goal=self.goal, plan=plan, inventory=inventory,
                     reference_lines=self.lines, automated_findings=findings)
             if decision or (edit and stage != 'modeling_gate'):
+                prompt += self.base_context
+                if self.base_source and stage == 'silhouette' and not checkpoint_id:
+                    prompt += BASE_FIRST_EDIT
                 images = [Path(best['sheet'])] if best and best.get('sheet') else []
                 try:
                     new_code = self.edit(ex, stage, prompt, self.files + images, d, checkpoint_id)
@@ -283,7 +304,8 @@ class Production:
 
     def review_candidate(self, stage, plan, renders, directory, best, candidate):
         review = self.reviewer.review(phase=stage, renders=renders, reference_copies=self.copies, goal_excerpt=self.goal,
-            plan_excerpt=json.dumps(plan), out_dir=directory, producer_session_ids=self.sessions, prior=best)
+            plan_excerpt=json.dumps(plan), out_dir=directory, producer_session_ids=self.sessions, prior=best,
+            base_mesh=bool(self.base_source))
         audit = self.pending.get('measurement', {}).get('audit', {}) if self.pending else {}
         face = self.pending.get('measurement', {}).get('face', {}) if self.pending else {}
         defects = []
@@ -317,7 +339,8 @@ class Production:
         directory.mkdir(exist_ok=True)
         renders = ex.render(directory / 'renders', 'final', mode='lookdev', res=(768, 960), samples=self.samples * 2)['render']['renders']
         pending = directory / f'{self.asset}.glb'
-        technical = ex.export_glb(pending)
+        technical = ex.export_glb(pending, mode=self.mode)
+        write_json_atomic(directory / 'export_validation.json', technical)
         def invoke_review(model, prompt, **kwargs):
             response = self.invoke(model, prompt, **kwargs)
             failure = response_failure(response, self.roles.reviewer)
@@ -340,6 +363,11 @@ class Production:
 
     def execute(self, ex):
         try:
+            if self.base_source:
+                selection = ex.inspect_base_mesh(self.base_source)
+                self.base_context = '\nVerified source selection: ' + json.dumps(selection) + '\n' + BASE_BRIEF
+                path = self.run / 'base_mesh_preflight.json'
+                write_json_atomic(path, {'source': self.base_source, 'selection': selection})
             plan = None
             if self.ledger.status('plan') == StageStatus.PASS:
                 if self.approved:
@@ -377,6 +405,7 @@ class Production:
             write_json_atomic(self.run / 'mcp_calls.json', ex.adapter.call_trace)
             ex.close()
         write_json_atomic(self.run / 'iteration_report.json', {'status': 'BLOCKED' if reason else 'PASS',
+            'identity': self.identity,
             'reason': reason, 'ledger': self.ledger.to_dict(), 'checkpoint_registry': self.manager.summary(),
             'export_approved': not reason and self.ledger.status('final') == StageStatus.PASS})
         return 1 if reason else 0

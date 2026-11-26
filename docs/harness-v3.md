@@ -1,6 +1,6 @@
 # V3: reference-guided character production
 
-V3 is a separate CLI for from-scratch character production. It leaves the legacy harness and its workflows available. The producer is locked to `strata/sc117-qwen38-abliterated-iq3_s`. The default reviewer is `openai/gpt-6.2-sol`; override it with `--reviewer-model-id` or `BLENDER_V3_REVIEWER_MODEL_ID` and independently verify vision support before launch. No automatic fallback is used. Reviewers cannot submit executable asset code. The execution path records the producer session and hashes the exact source before dispatch. Static Python checks are diagnostics and policy guardrails, **not** a sandbox for arbitrary untrusted Python.
+V3 supports two geometry strategies in the same reference-guided character pipeline: `FROM_SCRATCH` (default, no base inputs) and `BASE_MESH` (verified anatomical starting mesh). Legacy workflows remain available. The producer is locked to `strata/sc117-qwen38-abliterated-iq3_s`. The default reviewer is `openai/gpt-6.2-sol`; override it with `--reviewer-model-id` or `BLENDER_V3_REVIEWER_MODEL_ID` and independently verify vision support before launch. No automatic fallback is used. Reviewers cannot submit executable asset code. The execution path records the producer session and hashes the exact source before dispatch. Static Python checks are diagnostics and policy guardrails, **not** a sandbox for arbitrary untrusted Python.
 
 Generate an approved manifest outside the source image directory:
 
@@ -35,8 +35,18 @@ python3 -u scripts/run_harness_v3.py --prompt "${goal%x}" \
 
 Use a fresh run directory and an unused port. The CLI sets CPU rendering and software viewport. Original references are snapshotted byte-for-byte; bounded attachments retain a hash link to the source. Both Qwen and the reviewer receive pixels through `opencode run --file`. Pixel support was checked with synthetic colored shapes. Provider errors, even with a zero CLI exit code, cannot approve a gate.
 
+For `BASE_MESH`, use a fresh directory and port and replace the geometry option with:
+
+```bash
+--geometry-strategy BASE_MESH \
+--base-mesh-manifest assets/approved_base_meshes/blender_human_base_meshes/provenance.json \
+--base-mesh-name GEO-body_female_stylized
+```
+
+Check the [base library workflow](base-mesh-architecture.md) before selecting a name. Missing inputs, digest mismatches, non-mesh objects and inexact names stop preflight. Qwen's first silhouette edit must call `load_approved_body()` and change its vertex geometry. The executor records the loaded object's source, compares before/after body topology, and enforces body continuity across later edits. Independent review, not a successful import or shape hash change, determines whether the character matches.
+
 Qwen analyzes the references, then owns the locked design and scripts. Independent silhouette approval precedes separate face, hair and costume phases. The combined modeling gate precedes materials, which precede rigging and then animation. Legacy aggregate score cutoffs are retained (75 silhouette, 80 modeling, 86 lookdev, 65 motion, 85 final with the frozen rubric/category floors). Face, hair and costume have separate phase progress checks. Only the workflow captures, reloads, and exports candidates; no interactive production edits are required. Each review iteration saves source, execution record, scene measurements, checkpoint, and render evidence. Reviews of regressions are kept, but corrections continue from the selected candidate. A failed or unavailable gate never approves release.
 
-For recovery, inspect `production_state.json` and `checkpoints/registry.json`. With the same goal, models, source manifest, mode, asset and budget, repeat the command with the recorded `--resume-checkpoint` path; the stage is derived from the ledger. If review was interrupted after a checkpoint and renders were recorded, the pending evidence is rehashed and reviewed rather than promoted automatically. There is no checkpoint-based resume before any candidate has been saved. Do not copy an arbitrary `.blend` into the registry.
+For recovery, inspect `production_state.json` and `checkpoints/registry.json`. With the same goal, models, reference manifest, geometry strategy, exact approved base source (if applicable), port, mode, asset and budget, repeat the command with the recorded `--resume-checkpoint` path; the stage is derived from the ledger. Restore the files matching the recorded hashes; do not modify manifest metadata to make a different source pass. If review was interrupted after a checkpoint and renders were recorded, the pending evidence is rehashed and reviewed rather than promoted automatically. There is no checkpoint-based resume before any candidate has been saved. Do not copy an arbitrary `.blend` into the registry or resume a historical diagnostic run as an A/B arm.
 
 The root causes and baseline test failures are tracked in [the V3 audit](harness-v3-root-cause-analysis.md).

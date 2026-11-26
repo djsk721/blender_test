@@ -21,7 +21,7 @@ DISALLOWED_GENERATOR_MARKERS = ("tripo", "hunyuan", "hyper3d", "meshy", "rodin",
 EXTERNAL_AI_3D_GENERATORS_FORBIDDEN = True
 
 
-def verify_approved_base_mesh_manifest(manifest_path: Path | str) -> dict[str, Any]:
+def verify_approved_base_mesh_manifest(manifest_path: Path | str, *, require_archive: bool = False) -> dict[str, Any]:
     """Fail-closed provenance verification for approved generic CC0 anatomical Base Meshes."""
     import hashlib
 
@@ -48,6 +48,43 @@ def verify_approved_base_mesh_manifest(manifest_path: Path | str) -> dict[str, A
         raise PolicyViolationError(
             f"Base mesh SHA-256 mismatch for {blend_path}: expected {expected_sha}, got {actual_sha}"
         )
+    archive = {}
+    if require_archive:
+        from urllib.parse import urlsplit
+        from zipfile import BadZipFile, ZipFile
+
+        source = urlsplit(data.get('source_url') or '')
+        page = urlsplit(data.get('official_source_page') or '')
+        if (source.scheme != 'https' or source.netloc != 'download.blender.org'
+                or not source.path.startswith('/demo/bundles/') or not source.path.endswith('.zip')
+                or page.scheme != 'https' or page.netloc != 'www.blender.org' or page.path.rstrip('/') != '/download/demo-files'
+                or data.get('publisher') != 'Blender Foundation / Blender Studio' or not data.get('bundle_id')):
+            raise PolicyViolationError('Unapproved base mesh distribution provenance')
+        meta = (data.get('files') or {}).get('archive_zip') or {}
+        archive_path = (mpath.parent / (meta.get('rel_path') or '')).resolve()
+        if not archive_path.is_file() or not meta.get('sha256'):
+            raise PolicyViolationError(f'Base mesh archive file or expected SHA-256 missing: {archive_path}')
+
+        def digest(stream):
+            h = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                h.update(chunk)
+            return h.hexdigest()
+
+        with archive_path.open('rb') as stream:
+            archive_sha = digest(stream)
+        if archive_sha != meta['sha256'].lower():
+            raise PolicyViolationError(f"Base mesh archive SHA-256 mismatch for {archive_path}: expected {meta['sha256']}, got {archive_sha}")
+        try:
+            with ZipFile(archive_path) as bundle, bundle.open(rel_blend) as member:
+                if digest(member) != actual_sha:
+                    raise PolicyViolationError(f'Base mesh library does not match archive member {rel_blend!r}')
+        except (BadZipFile, KeyError) as exc:
+            raise PolicyViolationError(f'Cannot verify archive member {rel_blend!r} in {archive_path}: {exc}') from exc
+        archive = {'archive_path': str(archive_path), 'archive_sha256': archive_sha,
+                   'source_url': data['source_url'], 'official_source_page': data['official_source_page'],
+                   'manifest_sha256': hashlib.sha256(mpath.read_bytes()).hexdigest(),
+                   'library_bytes': blend_path.stat().st_size, 'recorded_library_bytes': blend_meta.get('bytes')}
     return {
         "verified": True,
         "manifest_path": str(mpath),
@@ -56,6 +93,7 @@ def verify_approved_base_mesh_manifest(manifest_path: Path | str) -> dict[str, A
         "bundle_id": data.get("bundle_id"),
         "license": data.get("license"),
         "publisher": data.get("publisher"),
+        **archive,
     }
 
 

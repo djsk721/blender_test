@@ -2907,6 +2907,7 @@ def export_and_verify_glb(
     *,
     export_collection: str = "COL_Export",
     rig_collection: str = "COL_Rig",
+    verify_reimport=None,
 ) -> dict[str, Any]:
     """Pack textures, export GLB, and verify by re-importing into a fresh temporary scene."""
     _require_blender()
@@ -2978,6 +2979,7 @@ def export_and_verify_glb(
     reimport_mats = 0
     reimport_armatures = 0
     reimport_error = None
+    reimport_checks = {}
     try:
         if bpy.context.window:
             bpy.context.window.scene = tmp_scene
@@ -2991,6 +2993,8 @@ def export_and_verify_glb(
             elif o.type == "ARMATURE":
                 reimport_armatures += 1
         reimport_mats = len(mats)
+        if verify_reimport is not None:
+            reimport_checks = verify_reimport(tmp_scene)
     except Exception as exc:
         reimport_error = str(exc)
     finally:
@@ -3007,6 +3011,7 @@ def export_and_verify_glb(
         and reimport_meshes > 0
         and reimport_tris > 0
         and reimport_error is None
+        and (verify_reimport is None or reimport_checks.get('valid') is True)
     )
     return {
         "valid": valid,
@@ -3019,6 +3024,7 @@ def export_and_verify_glb(
         "reimport_material_count": reimport_mats,
         "reimport_armature_count": reimport_armatures,
         "reimport_error": reimport_error,
+        **({'reimport_checks': reimport_checks} if verify_reimport is not None else {}),
     }
 
 

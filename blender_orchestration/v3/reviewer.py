@@ -81,7 +81,7 @@ def compose_sheet(images: list[tuple[str, Path]], out_path: Path, *, tile: int =
 
 
 def build_review_prompt(*, phase: str, goal_excerpt: str, plan_excerpt: str, render_names: list[str],
-                        reference_lines: list[str], prior_summary: str | None) -> str:
+                        reference_lines: list[str], prior_summary: str | None, base_mesh: bool = False) -> str:
     regions = ", ".join(PHASE_REGIONS.get(phase, list(REGION_PRIORITY)))
     cats = ", ".join(f'"{k}": <0-{v}>' for k, v in MODELING_CATEGORIES.items())
     return "\n".join([
@@ -95,6 +95,8 @@ def build_review_prompt(*, phase: str, goal_excerpt: str, plan_excerpt: str, ren
         f"Producer's own plan (excerpt): {plan_excerpt}" if plan_excerpt else "",
         f"Previous candidate for comparison: {prior_summary}" if prior_summary else "",
         "Score honestly against the references; a technically clean but generic model is not a likeness.",
+        ("Check whether the anatomical starting mesh has been sufficiently transformed to hit the target "
+         "proportions, silhouette and character identity. Apply the same reference rubric and thresholds." if base_mesh else ""),
         f"Use region values from: {regions}. Use severity CRITICAL (identity- or structure-breaking), MAJOR, MINOR.",
         "Set structural=true when the defect needs the part rebuilt (wrong base shape/topology/placement), not a tweak.",
         "Return ONLY one JSON object:",
@@ -202,7 +204,7 @@ class IndependentReviewer:
 
     def review(self, *, phase: str, renders: list[dict[str, Any]], reference_copies: list[dict[str, Any]],
                goal_excerpt: str, plan_excerpt: str, out_dir: Path, producer_session_ids: set[str],
-               prior: dict[str, Any] | None = None) -> dict[str, Any]:
+               prior: dict[str, Any] | None = None, base_mesh: bool = False) -> dict[str, Any]:
         render_items = [(str(r["view"]), Path(r["path"])) for r in renders if Path(str(r.get("path") or "")).is_file()]
         if not render_items or len(render_items) != len(renders):
             return {"verdict": "NOT_VERIFIED", "passed": False, "score": 0.0, "defects": [], "reason": "missing renders on disk"}
@@ -213,6 +215,9 @@ class IndependentReviewer:
             compose_sheet(body, out_dir / f"{phase}_body_sheet.png", tile=480, cols=4),
             compose_sheet(face, out_dir / f"{phase}_face_sheet.png", tile=480, cols=3) if face else None,
         ) if p]
+        if len(sheets) != bool(body) + bool(face):
+            return {"verdict": "NOT_VERIFIED", "passed": False, "score": 0.0, "defects": [],
+                    "reason": "could not compose all Blender renders for image delivery"}
         if prior and prior.get("sheet") and Path(prior["sheet"]).is_file():
             sheets.append(Path(prior["sheet"]))
         refs = [Path(r["review_copy"]) for r in reference_copies if Path(r["review_copy"]).is_file()]
@@ -222,6 +227,7 @@ class IndependentReviewer:
         prompt = build_review_prompt(
             phase=phase, goal_excerpt=goal_excerpt[:1400], plan_excerpt=plan_excerpt[:1400],
             render_names=[p.name for p in sheets], reference_lines=ref_lines,
+            base_mesh=base_mesh,
             prior_summary=(f"score {prior.get('score')} - {prior.get('summary','')[:300]} (its sheet is the last attachment)" if prior else None),
         )
         raw = self.invoke(self.model_id, prompt, files=[*sheets, *refs], timeout_sec=self.timeout_sec,

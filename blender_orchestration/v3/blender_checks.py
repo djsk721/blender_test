@@ -28,13 +28,14 @@ def _export_meshes(scene: Any, collection: str = "COL_Export") -> list[Any]:
     return [o for o in col.all_objects if o.type == "MESH" and o.name in scene.objects]
 
 
-def _world_verts(obj: Any) -> list[Any]:
+def _world_verts(obj: Any, group_index: int | None = None) -> list[Any]:
     deps = bpy.context.evaluated_depsgraph_get()
     ev = obj.evaluated_get(deps)
     mesh = ev.to_mesh()
     try:
         mw = obj.matrix_world
-        return [mw @ v.co for v in mesh.vertices]
+        return [mw @ v.co for v in mesh.vertices
+                if group_index is None or any(g.group == group_index and g.weight > 0.02 for g in v.groups)]
     finally:
         ev.to_mesh_clear()
 
@@ -118,14 +119,23 @@ def _bbox(verts: list[Any]) -> tuple[list[float], list[float]]:
     return ([min(v[i] for v in verts) for i in range(3)], [max(v[i] for v in verts) for i in range(3)])
 
 
+def _base_head(meshes: list[Any]) -> tuple[Any, list[Any]]:
+    body = next((o for o in meshes if o.name == 'SM_BaseBody'), None)
+    group = body.vertex_groups.get('ANAT_Head') if body else None
+    return body, _world_verts(body, group.index) if group else []
+
+
 def head_region(scene: Any) -> dict[str, Any]:
-    """Head bounds from SM_Head* if present, else from the top 13% of the export bounds."""
+    """Use a separate head mesh, the continuous body's landmark group, or a framing fallback."""
     meshes = _export_meshes(scene)
     heads = [o for o in meshes if o.name.lower().startswith("sm_head")]
     verts: list[Any] = []
     for o in heads:
         verts.extend(_world_verts(o))
     source = "SM_Head"
+    if not verts:
+        _, verts = _base_head(meshes)
+        source = 'SM_BaseBody/ANAT_Head'
     if not verts:
         source = "top_slice"
         allv: list[Any] = []
@@ -162,11 +172,14 @@ def face_report(scene: Any) -> dict[str, Any]:
     meshes = _export_meshes(scene)
     heads = [o for o in meshes if o.name.lower().startswith("sm_head")]
     findings: list[dict[str, Any]] = []
-    if not heads:
-        return {"checked": False, "reason": "no SM_Head* mesh (naming contract)", "findings": findings}
-    head = heads[0]
+    if heads:
+        head = heads[0]
+        hv = _world_verts(head)
+    else:
+        head, hv = _base_head(meshes)
+    if not hv:
+        return {"checked": False, "reason": "no SM_Head* mesh or continuous-body ANAT_Head region", "findings": findings}
     tree = _bvh(head)
-    hv = _world_verts(head)
     hmn, hmx = _bbox(hv)
     hc = [(hmn[i] + hmx[i]) / 2 for i in range(3)]
     eyes = [o for o in _find(meshes, "eye") if not any(t in o.name.lower() for t in ("brow", "lash", "lid"))]
@@ -198,7 +211,7 @@ def face_report(scene: Any) -> dict[str, Any]:
             findings.append({"code": "ASYMMETRIC_EYES", "object": "eyes", "severity": "MINOR",
                              "detail": f"eye centres {l} / {r} not mirrored about x={hc[0]:.3f}"})
     for part in _find(meshes, "eye", "ear", "nose", "brow", "lash", "lid", "mouth", "lip"):
-        if part in heads or tree is None:
+        if part == head or part in heads or tree is None:
             continue
         pv = _world_verts(part)
         if not pv:
@@ -226,7 +239,49 @@ def proportion_report(scene: Any) -> dict[str, Any]:
     if hr.get("found") and hr["source"] == "SM_Head" and hr["height"] > 0:
         out["head_height_m"] = round(hr["height"], 4)
         out["heads_tall"] = round(total / hr["height"], 2)
+    elif hr.get('found') and hr['source'] == 'SM_BaseBody/ANAT_Head' and hr['height'] > 0:
+        out['head_measurement_source'] = hr['source']
+        out['estimated_head_height_m'] = round(hr['height'], 4)
+        out['estimated_heads_tall'] = round(total / hr['height'], 2)
     return out
+
+
+def character_export_inventory(objects: Any) -> dict[str, Any]:
+    """Collect comparable facts from source meshes or a just-reimported GLB scene."""
+    meshes = [o for o in objects if o.type == 'MESH' and not o.hide_render]
+    verts = [v for o in meshes for v in _world_verts(o)]
+    height = (max(v.z for v in verts) - min(v.z for v in verts)) if verts else 0.0
+    materials = {m for o in meshes for m in o.data.materials if m}
+    textures = {n.image for m in materials if m.use_nodes and m.node_tree for n in m.node_tree.nodes
+                if n.type == 'TEX_IMAGE' and n.image}
+    rigs = [o for o in objects if o.type == 'ARMATURE' and len(o.data.bones)]
+    actions = set()
+    for rig in rigs:
+        anim = rig.animation_data
+        if anim:
+            if anim.action:
+                actions.add(anim.action.name)
+            actions.update(s.action.name for t in anim.nla_tracks for s in t.strips if s.action)
+    return {'mesh_count': len(meshes), 'height_m': height, 'material_count': len(materials),
+            'unmaterialed_meshes': [o.name for o in meshes if not any(o.data.materials)],
+            'texture_count': len(textures), 'missing_images': sorted(i.name for i in textures if not i.has_data),
+            'rig_count': len(rigs), 'skins': sum(any(m.type == 'ARMATURE' and m.object in rigs for m in o.modifiers)
+                                                for o in meshes), 'actions': sorted(actions)}
+
+
+def compare_character_export(source: dict[str, Any], imported: dict[str, Any], mode: str) -> dict[str, Any]:
+    import re
+
+    actions = {re.sub(r'\.\d{3}$', '', name) for name in imported['actions']}
+    checks = {
+        'mesh': imported['mesh_count'] >= source['mesh_count'] > 0,
+        'scale': source['height_m'] > 0 and abs(imported['height_m'] - source['height_m']) <= 0.05 * source['height_m'],
+        'materials': imported['material_count'] > 0 and not imported['unmaterialed_meshes'],
+        'textures': imported['texture_count'] >= source['texture_count'] and not imported['missing_images'],
+        'rig': mode == 'static' or (imported['rig_count'] == 1 and imported['skins'] > 0),
+        'animations': mode != 'animated' or {'ACT_Idle', 'ACT_Walk', 'ACT_Run'} <= actions,
+    }
+    return {'valid': all(checks.values()), 'checks': checks, 'source': source, 'reimported': imported}
 
 
 def motion_review(scene: Any, directory: str, *, animation: bool, samples: int) -> dict[str, Any]:

@@ -30,7 +30,7 @@ EXECUTION CONTRACT (harness rules, not design guidance):
 TOOLKIT_REFERENCE = """\
 TOOLKIT `bt` (generic geometry helpers; plain bpy/bmesh is equally allowed):
 - bt.remove_object_if_exists(name); bt.link_to_collection(obj, col_export); bt.set_smooth(obj, True)
-- bt.join_objects(objs, name, collection=col_export)  # merge repeated small parts into one mesh
+- bt.join_objects(objects, name, collection=col_export)  # consumes sources; use only the returned object afterward
 - bt.loft_sections(name, sections, segments=24, closed_u=True, cap_start=True, cap_end=True, smooth=True, subsurf=1, collection=col_export)
     sections: list of dicts {"center":(x,y,z), "rx":..., "ry":...} (elliptical rings bottom->top) or explicit vertex rings
 - bt.create_lathe_mesh(name, profile_rz, center=(0,0,0), rot=(0,0,0), scale_xy=(1,1), segments=28, cap_start=True, cap_end=True, smooth=True, subsurf=1, collection=col_export)
@@ -44,7 +44,7 @@ TOOLKIT `bt` (generic geometry helpers; plain bpy/bmesh is equally allowed):
 - bt.create_tube_along_curve(name, points, radii, segments=14, cap_ends=True, smooth=True, subsurf=1, collection=col_export)
 - bt.create_beveled_panel(name, profile_2d, depth, location=(0,0,0), rotation=(0,0,0), bevel_width=0.003, bevel_segments=2, smooth=True, collection=col_export)
 - bt.add_modifiers(obj, solidify=None, solidify_offset=1.0, bevel=None, bevel_segments=2, subsurf=None, mirror_x=False)
-- bt.smart_uv_unwrap(obj); bt.make_pbr_material(name, "#RRGGBB", roughness=0.5, metallic=0.0, subsurface=0.0, surface_type="skin|fabric|leather|hair|metal"); bt.assign_material(obj, mat)
+- bt.smart_uv_unwrap(obj); bt.make_pbr_material(name, base_color="#RRGGBB", roughness=0.5, metallic=0.0, subsurface=0.0, surface_type="skin|fabric|leather|hair|metal"); bt.assign_material(obj, mat)
 - bt.create_painted_image_texture(name, width, height, ops, base_color=(r,g,b,1.0))  # ops in UV 0..1: rect, ellipse, line, polyline, ring, linear_gradient
 OPTIONAL generic humanoid starters (they are templates, not a likeness; reshape them with deform_mesh_sculpt/bmesh
 or replace them when the reviewer reports a structural mismatch):
@@ -208,7 +208,8 @@ def reference_analysis_prompt(goal: str, reference_lines: list[str], overlaps: l
         "GOAL:\n" + goal.strip()[:2500],
         "References:\n" + "\n".join(reference_lines),
         "Known content overlaps between files: " + json.dumps(overlaps),
-        "Return ONE JSON object: {\"per_reference\": [{\"file\": .., \"shows\": .., \"views\": [..]}], "
+        "Return ONE valid JSON object under 1800 tokens. List each exact attached filename once; keep descriptions brief. "
+        "Schema: {\"per_reference\": [{\"file\": .., \"shows\": .., \"views\": [..]}], "
         "\"proportions\": {\"heads_tall_estimate\": .., \"landmarks_as_fraction_of_height\": {\"chin\": .., \"shoulder\": .., \"chest\": .., \"waist\": .., \"crotch\": .., \"knee\": .., \"ankle\": ..}, \"shoulder_to_height\": .., \"hip_to_height\": ..}, "
         "\"face\": .., \"hair\": .., \"costume_layers\": [..], \"accessories\": [..], \"palette\": [{\"part\": .., \"hex\": ..}], "
         "\"conflicts\": [..], \"authority\": {\"identity\": <file>, \"geometry\": <file>, \"costume\": <file>, \"face_hair\": <file>}, \"not_shown\": [..]}",

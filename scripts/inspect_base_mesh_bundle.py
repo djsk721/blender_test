@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
+import socket
 from pathlib import Path
 import sys
 
@@ -25,14 +28,25 @@ PORT = 9878
 
 
 def main() -> int:
-    verified = verify_approved_base_mesh_manifest(MANIFEST)
-    resetter = BlenderSessionResetter(project_root=PROJECT_ROOT, runtime_dir=RUNTIME_DIR, blender_port=PORT)
-    resetter.reset_for_next_model(start_fresh_blender=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--manifest', type=Path, default=MANIFEST)
+    parser.add_argument('--output', type=Path, default=OUT_PATH)
+    parser.add_argument('--runtime', type=Path, default=RUNTIME_DIR)
+    parser.add_argument('--port', type=int, default=PORT)
+    args = parser.parse_args()
+    verified = verify_approved_base_mesh_manifest(args.manifest, require_archive=True)
+    if args.output.exists():
+        parser.error(f'Output already exists: {args.output}')
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', args.port))
+    os.environ.update(BLENDER_RENDER_DEVICE='CPU', BLENDER_CPU_SOFTWARE_VIEWPORT='true')
+    resetter = BlenderSessionResetter(project_root=PROJECT_ROOT, runtime_dir=args.runtime.resolve(), blender_port=args.port)
     env = {
         "BLENDER_HOST": "127.0.0.1",
-        "BLENDER_PORT": str(PORT),
+        "BLENDER_PORT": str(args.port),
         "BLENDER_MCP_CONFIG": str(PROJECT_ROOT / ".opencode/mcp/blender/config.json"),
-        "BLENDER_MCP_RUNTIME_DIR": str(RUNTIME_DIR),
+        "BLENDER_MCP_RUNTIME_DIR": str(args.runtime.resolve()),
+        "BLENDER_MCP_MANAGE_EXTERNAL": "false",
         "BLENDER_MCP_IDLE_TIMEOUT": "300",
         "BLENDER_MCP_WATCHDOG_POLL": "1.0",
         "BLENDER_MCP_AUTO_RESTORE": "false",
@@ -49,12 +63,17 @@ def main() -> int:
             "scene = bpy.data.scenes.new('SCENE_InspectBaseMeshes')\n"
             "if bpy.context.window:\n"
             "    bpy.context.window.scene = scene\n"
+            "for obj in list(data_to.objects):\n"
+            "    if obj is not None:\n"
+            "        scene.collection.objects.link(obj)\n"
+            "bpy.context.view_layer.update()\n"
             "items = []\n"
             "for obj in list(data_to.objects):\n"
             "    if obj is None:\n"
             "        continue\n"
-            "    scene.collection.objects.link(obj)\n"
-            "    entry = {'name': obj.name, 'type': obj.type}\n"
+            "    rig = obj.find_armature()\n"
+            "    entry = {'name': obj.name, 'type': obj.type, 'parent': obj.parent.name if obj.parent else None,\n"
+            "             'children': [c.name for c in obj.children], 'armature': rig.name if rig else None}\n"
             "    if obj.type == 'MESH' and obj.data:\n"
             "        me = obj.data\n"
             "        quads = sum(1 for p in me.polygons if len(p.vertices) == 4)\n"
@@ -77,15 +96,19 @@ def main() -> int:
             "            'shape_keys': [kb.name for kb in me.shape_keys.key_blocks] if me.shape_keys else [],\n"
             "            'modifiers': [{'name': m.name, 'type': m.type} for m in obj.modifiers],\n"
             "            'materials': [m.name for m in me.materials if m],\n"
-            "            'bbox': bbox,\n"
+            "            'bbox': bbox, 'topology': bmo.body_structure(obj),\n"
             "        })\n"
             "    items.append(entry)\n"
             "print('__ORCH_JSON__:' + json.dumps({'ok': True, 'blender_version': bpy.app.version_string, 'object_count': len(items), 'objects': items}))\n"
         )
+        code = (f'import sys\nsys.path.insert(0, {str(PROJECT_ROOT)!r})\n'
+                'from blender_orchestration import base_mesh_ops as bmo\n') + code
         res = adapter.execute_blender_json(code, user_prompt="Inspect official Human Base Meshes bundle", stage="inspect_base_meshes")["parsed"]
         payload = {"provenance": verified, "inspection": res}
-        OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        OUT_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        with args.output.open('x', encoding='utf-8') as stream:
+            json.dump(payload, stream, indent=2)
+            stream.write('\n')
         print(json.dumps({"ok": res.get("ok"), "blender_version": res.get("blender_version"), "object_count": res.get("object_count"), "names": [o["name"] for o in res.get("objects", [])]}, indent=2))
         return 0
     finally:

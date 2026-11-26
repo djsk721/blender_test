@@ -9,6 +9,7 @@ curve-based hair, and hand grip helpers operate dynamically from mesh geometry i
 from __future__ import annotations
 
 from collections import deque
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -117,10 +118,13 @@ def verify_and_load_base_mesh(
     collection: Any | None = None,
     new_name: str = "SM_BaseBody",
     rotate_z_deg: float | None = None,
+    expected_source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Verify SHA-256 provenance, append approved Base Mesh via bpy.data.libraries.load, and normalize."""
     _require_blender()
-    prov = verify_approved_base_mesh_manifest(manifest_path)
+    prov = verify_approved_base_mesh_manifest(manifest_path, require_archive=expected_source is not None)
+    if expected_source is not None and prov | {'object_name': object_name} != expected_source:
+        raise ValueError('Approved base mesh source changed after preflight')
     blend_path = prov["blend_path"]
 
     bt.remove_object_if_exists(new_name)
@@ -129,6 +133,8 @@ def verify_and_load_base_mesh(
     with bpy.data.libraries.load(blend_path, link=False) as (data_from, data_to):
         avail = list(data_from.objects)
         if object_name not in avail:
+            if expected_source is not None:
+                raise ValueError(f'Exact approved object {object_name!r} not found in {blend_path}')
             matches = [n for n in avail if n.lower() == object_name.lower() or object_name.lower() in n.lower()]
             if not matches:
                 raise ValueError(f"Object {object_name!r} not found in verified bundle {blend_path}. Available: {avail}")
@@ -233,6 +239,60 @@ def verify_and_load_base_mesh(
         "uv_layers": [u.name for u in mesh.uv_layers],
         "landmarks": landmarks,
     }
+
+
+def inspect_library_selection(blend_path: str, name: str) -> dict[str, Any]:
+    """Inspect the exact object without leaving any imported datablocks in the run scene."""
+    _require_blender()
+    before = set(bpy.data.user_map())
+    try:
+        with bpy.data.libraries.load(blend_path, link=True) as (src, dst):
+            names = list(src.objects)
+            if name in names:
+                dst.objects = [name]
+        if name not in names:
+            raise ValueError(f'Base mesh object {name!r} not found in {blend_path} (exact name required). Available: {names}')
+        obj = dst.objects[0]
+        if obj is None or obj.type != 'MESH' or not len(obj.data.vertices) or not len(obj.data.polygons):
+            raise ValueError(f'Base mesh object {name!r} is not a nonempty polygon mesh')
+        return {'name': name, 'type': obj.type, 'vertices': len(obj.data.vertices),
+                'polygons': len(obj.data.polygons), 'materials': [m.name for m in obj.data.materials if m],
+                'parent': obj.parent.name if obj.parent else None,
+                'armature': obj.find_armature().name if obj.find_armature() else None,
+                'modifiers': [m.type for m in obj.modifiers]}
+    finally:
+        bpy.data.batch_remove(ids=set(bpy.data.user_map()) - before)
+
+
+def body_structure(obj: Any) -> dict[str, Any]:
+    """Measure raw topology and local shape, independent of object transforms and material edits."""
+    _require_blender()
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(obj.data)
+        remaining = set(bm.verts)
+        components = 0
+        shape = hashlib.sha256()
+        origin = obj.data.vertices[0].co if len(obj.data.vertices) else Vector((0, 0, 0))
+        for vert in obj.data.vertices:
+            shape.update(','.join(f'{v:.6f}' for v in (vert.co - origin)).encode() + b';')
+        while remaining:
+            components += 1
+            pending = [remaining.pop()]
+            while pending:
+                for edge in pending.pop().link_edges:
+                    for vert in edge.verts:
+                        if vert in remaining:
+                            remaining.remove(vert)
+                            pending.append(vert)
+        return {'vertices': len(bm.verts), 'polygons': len(bm.faces), 'components': components,
+                'boundary_edges': sum(e.is_boundary for e in bm.edges),
+                'non_manifold_edges': sum(not e.is_manifold and not e.is_boundary for e in bm.edges),
+                'inconsistent_winding_edges': sum(e.is_manifold and not e.is_contiguous for e in bm.edges),
+                'degenerate_faces': sum(f.calc_area() <= 1e-12 for f in bm.faces),
+                'shape_sha256': shape.hexdigest()}
+    finally:
+        bm.free()
 
 
 def _find_head_shoulder_splits(verts: list[Any], z_min: float, h: float) -> dict[str, float]:

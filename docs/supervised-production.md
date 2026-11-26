@@ -1,6 +1,6 @@
 # GPT-supervised Blender production
 
-For Qwen-only, reference-guided character production with configurable independent vision review, use the separate [V3 CLI](harness-v3.md). The following instructions describe the legacy workflow.
+For Qwen-only, reference-guided character production with independent vision review, use the separate [V3 CLI](harness-v3.md). V3 defaults to `FROM_SCRATCH`; choose `BASE_MESH` explicitly with a verified manifest and exact mesh name. See [verified base libraries](base-mesh-architecture.md) for inspection, provenance and recovery. The following instructions describe the legacy workflow.
 
 The runner uses GPT for the design brief and bounded repair work orders, Qwen for asset-specific Blender Python, and a separate GPT session for image review. OpenCode sessions use isolated configuration and fresh context. The harness validates and executes Qwen's scripts through Blender MCP. Stage review and the frozen 100-point final rubric retain their original thresholds.
 

@@ -116,6 +116,8 @@ def validate_blender_script(code: str, *, max_lines: int = MAX_SCRIPT_LINES_DEFA
                 if target.startswith(prefix):
                     errors.append(f"line {node.lineno}: {target}() refused - {why}")
             leaf = target.rsplit(".", 1)[-1]
+            if leaf == 'verify_and_load_base_mesh':
+                errors.append(f"line {node.lineno}: call the source-bound load_approved_body() in BASE_MESH instead")
             if leaf in FORBIDDEN_NAMES:
                 errors.append(f"line {node.lineno}: {leaf}() refused - external AI/asset generation is forbidden")
         elif isinstance(node, ast.Attribute):
