@@ -22,6 +22,7 @@ from blender_orchestration.v3.provenance import ProvenanceLedger
 from blender_orchestration.sequential_benchmark import BlenderSessionResetter
 from blender_orchestration.v3.reviewer import build_review_prompt, parse_review
 from blender_orchestration.v3.script_validator import validate_blender_script
+from blender_orchestration.v3.status import StageStatus
 from tests.blender_mcp.test_harness_v3 import roles
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +107,36 @@ def test_reference_analysis_retry_preserves_full_attachment_set(tmp_path):
     assert all(call.kwargs['files'] == p.files for call in p.invoke.call_args_list)
     assert (p.run / 'handoffs/reference_analysis/response.json').exists()
     assert (p.run / 'handoffs/reference_analysis_retry/response.json').exists()
+
+
+def test_technical_retries_preserve_qwen_source_and_failures(tmp_path):
+    ref = tmp_path / 'ref.png'
+    Image.new('RGB', (12, 12)).save(ref)
+    invoke = Mock()
+    scripts = ('return', 'bad_call()', 'next_bad_call()', 'pass')
+    invoke.side_effect = [{'model_id': roles().producer, 'returncode': 0, 'session_id': f'qwen-{i}',
+                           'text': f'```python\n{code}\n```'} for i, code in enumerate(scripts)]
+    p = Production(run=tmp_path / 'run', root=ROOT, goal='goal', mode='static', roles=roles(),
+                   manifest=build_manifest_with_primary(tmp_path, ref.name), invoke=invoke, budget=0, timeout=30, samples=4)
+    ex = Mock()
+    ex.execute_producer_script.side_effect = [
+        {'ok': False, 'error': 'SyntaxError: return outside function', 'scene_unchanged': True},
+        {'ok': False, 'error': 'Invalid keyword color'},
+        {'ok': False, 'error': 'Bad vertex group membership'},
+        {'ok': True, 'audit': {'mesh_count': 1}},
+    ]
+    p.ledger.start('plan')
+    p.ledger.record_execution('plan', 'plan.json')
+    p.ledger.finish('plan', StageStatus.PASS)
+    p.ledger.start('silhouette')
+    parent = p.run / 'candidate'
+    assert p.edit(ex, 'silhouette', 'work', p.files, parent, None) == 'pass'
+    assert [c.args[0] for c in ex.execute_producer_script.call_args_list] == list(scripts)
+    assert ex.init_scene.call_count == 2
+    assert 'SyntaxError: return outside function' in invoke.call_args.args[1]
+    assert 'Invalid keyword color' in invoke.call_args.args[1]
+    assert 'next_bad_call()' in invoke.call_args.args[1]
+    assert all((parent / f'producer_{i}' / 'mcp.json').is_file() for i in range(1, 5))
 
 
 def test_checkpoint_and_execution_identity(tmp_path, bundle):

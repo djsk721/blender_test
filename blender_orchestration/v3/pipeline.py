@@ -29,6 +29,7 @@ SKILLS = {
     'rigging': ['rigging'], 'animation': ['animation'], 'modeling_gate': ['qa-review'],
     'final': ['rendering', 'export-pipeline', 'qa-review'],
 }
+MAX_TECHNICAL_ATTEMPTS = 4
 
 
 class Blocked(RuntimeError):
@@ -174,7 +175,8 @@ class Production:
                     + prompt + self.skills(stage))
         prompt = original
         code = None
-        for retry in range(1, 3):
+        failures = []
+        for retry in range(1, MAX_TECHNICAL_ATTEMPTS + 1):
             directory = parent / f'producer_{retry}'
             r = self.call('producer', prompt, files, directory)
             code = extract_python_block(r['text'])
@@ -201,13 +203,11 @@ class Production:
             else:
                 result = {'error': 'No fenced Python block in Qwen reply'}
             error = str(result.get('traceback') or result.get('error') or 'No meshes')
-            if 'SyntaxError' in error or not code:
-                prompt = ('The previous response was not valid complete Python. Rewrite it from scratch in '
-                          'under 100 lines; do not repeat the broken response.\n' + original)
-            else:
-                prompt = build_retry_work_order(original, error, code) + (
-                    '\nFor indexing or unpacking errors, replace the inconsistent tuple encoding with named fields, '
-                    'rather than changing the tuple size in just one caller.')
+            failures.append(str(result.get('error') or 'No meshes'))
+            prompt = build_retry_work_order(original, error, code) + (
+                '\nAvoid repeating any of these earlier failures: ' + json.dumps(failures)
+                + '\nFix invalid indentation and top-level return before emitting the fence. For indexing or '
+                'unpacking errors, use named fields rather than changing the tuple size in just one caller.')
         raise Blocked(f'{stage}: bounded technical retries exhausted: {result.get("error")}')
 
     def candidate(self, ex, stage, plan, edit=True):

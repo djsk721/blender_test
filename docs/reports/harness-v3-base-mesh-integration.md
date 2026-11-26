@@ -61,6 +61,12 @@ Both arms have a bounded reference-analysis retry on the current revision: the p
 
 **Follow-up BASE_MESH:** planning passed. `candidates/silhouette/00/producer_1/mcp.json` records a syntax rejection (`return` outside a function). In `producer_2/asset.py`, line 4 called the pinned loader successfully, line 11 deleted the returned `SM_BaseBody` via the cleanup list, and line 14 dereferenced the removed object. Blender MCP returned `ReferenceError: StructRNA of type Object has been removed`. No transformation survived, no candidate was checkpointed, and no review was possible. The work order now explicitly excludes the base from deletion and join lists and clarifies that companion eyes are returned as names.
 
+**Follow-up FROM_SCRATCH:** `output/zelda-v3-from_scratch-20261126-183001/` blocked before a checkpoint. Validation rejected dynamic `__import__` on attempt one. Blender rejected the unsupported `color` keyword to `make_pbr_material` on attempt two.
+
+**Targeted BASE_MESH diagnostic:** `output/zelda-v3-base-diagnostic-20261126-183956/` (port 19884) also blocked before a checkpoint. On attempt two the recorded `base_mesh_attempt.loaded` is `true`; the script then failed at `vg.vertices` with `AttributeError: 'VertexGroup' object has no attribute 'vertices'`. This was an API usage failure, not a bad source hash or missing mesh. It is not an A/B arm.
+
+The subsequent controlled pair uses a common upper bound of four technical attempts per edit (separate from the unchanged budget of three visual corrections). Each retry gets the exact prior source plus the accumulated errors, rather than discarding the script when a syntax error could be fixed locally. The producer prompt spells out the exact loader return keys, vertex-group membership API, and material argument names. No supervisor-authored correction script is executed.
+
 | Evaluation, completed original pair | FROM_SCRATCH | BASE_MESH |
 |---|---|---|
 | Silhouette, anatomy, head/body ratio, shoulder/torso and limb proportions | Not measured | Not measured |

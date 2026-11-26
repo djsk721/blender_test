@@ -35,11 +35,16 @@ Preserve the ANAT_Head vertex group for measurement. Do not import other librari
 BASE_FIRST_EDIT = """
 On this empty scene call `loaded = load_approved_body()` exactly once (no arguments).
 It returns the already-linked `object`, `landmarks`, companion eye **names**, and source metadata.
-Look up eye names in `bpy.data.objects`. There are no previous garments or shells to delete here.
+Exact keys: `loaded['landmarks']['landmarks']` for the coordinate mapping, and
+`loaded['companion_eyes']` for object names. Look up eye names in `bpy.data.objects`.
+There are no previous garments or shells to delete here. VertexGroup has no `.vertices`;
+if you need membership, iterate mesh vertices and check each vertex's `.groups` by group index.
 Transform `loaded['object']`
 in this same edit; loading, renaming, or adding clothing alone will not pass. `bmo` is the legacy
 toolkit; `bmo.apply_semantic_stylization(obj, controls)` can reshape head, shoulders, waist, hips
-and limbs. Use your own measured landmark adjustments where needed, including elbow/knee placement
+and limbs. It takes signed fractional changes around zero, not scale multipliers. It returns
+`landmarks_after` as a coordinate mapping. Prefer it to implementing landmark detection manually.
+Use your own measured landmark adjustments where needed, including elbow/knee placement
 and arm repose; check sockets after moving the head. Block out fitted garments, boots and hair masses
 so the body is clothed and the four renders read as the target, not a bare generic T-pose.
 """

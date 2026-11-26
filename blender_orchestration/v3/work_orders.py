@@ -24,6 +24,8 @@ EXECUTION CONTRACT (harness rules, not design guidance):
 - Never render, save, open or reset files, never add cameras/lights/scenes, never import or download meshes,
   never use network/subprocess. The harness renders and checkpoints after your script.
 - Blender 4.x/5.x API only (no bone.layers, no use_auto_smooth, use Matrix.decompose()).
+- No top-level return. Use normal imports, never __import__. When calling make_pbr_material,
+  the color parameter is `base_color`, never `color`. A join invalidates its consumed source objects.
 - Optionally define LANDMARKS = {"name": (x, y, z), ...} for the key points you used (reported back to you).
 """
 
@@ -196,9 +198,11 @@ def build_correction_work_order(*, phase: str, goal: str, plan: dict[str, Any], 
 def build_retry_work_order(base_prompt: str, error: str, failed_code: str | None) -> str:
     snippet = ""
     if failed_code:
-        snippet = "\nFailed script:\n```text\n" + (failed_code if len(failed_code) < 9000 else failed_code[:6000] + "\n...\n" + failed_code[-2500:]) + "\n```"
+        snippet = "\nFailed script:\n```text\n" + failed_code + "\n```"
     return ("YOUR PREVIOUS SCRIPT FAILED AND THE SCENE WAS RESTORED TO ITS STATE BEFORE IT.\nError:\n```\n" + error[-1500:]
-            + "\n```" + snippet + "\nReturn the complete corrected script (one ```python block).\n\n" + base_prompt)
+            + "\n```" + snippet + "\nFix the exact failing statement first. Preserve the working code and avoid introducing new APIs. "
+            "Check the rest of the script for repetitions of the same mistake. Return the complete corrected script "
+            "(one ```python block).\n\n" + base_prompt)
 
 
 def reference_analysis_prompt(goal: str, reference_lines: list[str], overlaps: list[dict[str, Any]]) -> str:
